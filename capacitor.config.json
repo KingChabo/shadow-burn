@@ -1,0 +1,6 @@
+{
+  "appId": "com.shadowburn.app",
+  "appName": "Shadow Burn",
+  "webDir": "dist",
+  "android": { "backgroundColor": "#07090c" }
+}

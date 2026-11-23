@@ -1,0 +1,40 @@
+# Abhängigkeiten und Build-Ausgaben
+node_modules
+dist
+dev-dist
+*.log
+
+# Fertige Apps (gehören nicht ins Repo, sind groß)
+*.apk
+*.aab
+
+# Signier-Schlüssel und lokale Einstellungen – NIE hochladen
+*.keystore
+*.jks
+android/local.properties
+.env
+.env.*
+.claude/settings.local.json
+.claude/
+
+# Blender-Werkzeuge (nur lokal)
+blender/
+__pycache__/
+
+# Screenshots und Prüf-Ordner aus Tests
+/*.png
+/bluetooth-uebergabe/
+/rekordvergleich-check/
+/shots-muskel/
+/tour-emulator/
+/update-knopf/
+/update-test/
+/test-1.0.10/
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Persönliche Entwickler-Notizen (bleiben nur auf dem PC)
+ENTWICKLER.md

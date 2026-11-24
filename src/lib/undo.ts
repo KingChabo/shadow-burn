@@ -3,7 +3,8 @@ import { addDays, daysBetween } from './date';
 import { emptyStreak, REST_DAY_EVERY, STREAK_MIN_POINTS, type StreakState } from './streak';
 import { badgeStates, TIER_GEMS, type Claimed } from './badges';
 import type { Wallet } from './game';
-import { questsFor, type QuestSwap } from './quests';
+import { questsFor, type DayQuests, type QuestSwap } from './quests';
+import { trackOf, type QuestLevels } from './fitness';
 
 /**
  * Was nach dem Löschen eines Trainings (normal oder Gerät) zusätzlich zurückgedreht wird:
@@ -82,9 +83,16 @@ export async function undoSideEffects(r: Removed, today: string): Promise<void> 
   const quests = (r.gemAwards ?? []).filter((a) => a.reason.startsWith(QUEST)).map((a) => a.reason.slice(QUEST.length));
   if (quests.length && r.day === today) {
     const swap = await getKV<QuestSwap | null>('questSwap', null);
-    const ids = questsFor(r.day, swap).filter((q) => quests.includes(q.label)).map((q) => q.id);
+    const stored = await getKV<DayQuests | null>('questsDay', null);
+    const reopened = questsFor(r.day, swap, stored).filter((q) => quests.includes(q.label));
+    const ids = reopened.map((q) => q.id);
     const claimed = await getKV<string[]>('questsClaimed', []);
     await setKV('questsClaimed', claimed.filter((id) => !ids.includes(id)));
+    // Fortschritt im Bereich zurücknehmen
+    const lv = await getKV<QuestLevels>('questLevels', {});
+    let changed = false;
+    for (const q of reopened) { const t = trackOf(q.activityId); if (t && lv[t]) { lv[t] = lv[t]! - 1; changed = true; } }
+    if (changed) await setKV('questLevels', lv);
   }
 
   if (gemsBack) await takeGems(gemsBack);

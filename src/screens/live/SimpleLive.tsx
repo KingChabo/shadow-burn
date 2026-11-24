@@ -6,73 +6,110 @@ import { fmtPace, fmtTime } from '../../lib/date';
 import { createTiltCounter } from '../../features/pose/counters';
 import { Btn, Header } from '../../components/ui';
 import { MANUAL_FREE_REPS, MAX_REPS_PER_SEC, MAX_SESSION_REPS } from '../../lib/scoring';
-import { BigCount, TopBar, useEnd, useStopwatch, useWakeLock, type FinishFn } from './common';
+import { TopBar, useEnd, useStopwatch, useWakeLock, type FinishFn } from './common';
+import { CountRing, RestScreen, SetBar, useExerciseInfo, useSets } from './sets';
+import type { LiveSets } from '../../lib/sets';
 
-type Props = { activity: Activity; onFinish: FinishFn };
+type Props = { activity: Activity; onFinish: FinishFn; sets?: LiveSets };
 
-export function ManualLive({ activity: a, onFinish }: Props) {
+export function ManualLive({ activity: a, onFinish, sets: cfg }: Props) {
   const [n, setN] = useState(0);
   const [typed, setTyped] = useState('');
+  const [typing, setTyping] = useState(false);
   const start = useRef(Date.now());
   const sec = useStopwatch();
   useWakeLock();
+  const info = useExerciseInfo(a);
+  const endRef = useRef(() => {});
+  const s = useSets(a, cfg, n, () => endRef.current());
   const limit = Math.min(MAX_SESSION_REPS, Math.max(MANUAL_FREE_REPS, Math.floor(sec * MAX_REPS_PER_SEC)));
-  const add = (d: number) => { setN((x) => Math.max(0, x + d)); if (d > 0) { sfx('tap'); buzz(25); } };
-  const { end, sheet } = useEnd(n, onFinish, () => ({ activityId: a.id, mode: 'manual', start: start.current, end: Date.now(), reps: n, seconds: Math.round(sec) }), `${n} ${a.unitLabel} · ${fmtTime(sec)}`);
+  // Im Satz-Modus zählt alles ab Satzbeginn; während der Pause wird nicht gezählt
+  const add = (d: number) => { if (s.rest.running) return; setN((x) => Math.max(s.base, x + d)); if (d > 0) { sfx('tap'); buzz(25); } };
+  const { end, sheet } = useEnd(s.total, onFinish, () => ({ activityId: a.id, mode: 'manual', start: start.current, end: Date.now(), reps: s.total, seconds: Math.round(sec), sets: s.setList }), `${s.total} ${a.unitLabel} · ${fmtTime(sec)}`);
+  endRef.current = end;
+  const setTo = () => { if (!s.rest.running && typed) setN(s.base + Number(typed)); setTyped(''); setTyping(false); };
   return (
     <div className="fixed inset-0 z-40 bg-bg flex flex-col">
       {sheet}
       <TopBar seconds={sec} onEnd={end} title={a.name} />
-      <div className="flex-1 grid place-items-center pt-16"><BigCount n={n} label={a.unitLabel} pulseKey={n} /></div>
-      <div className="px-4 pb-[max(env(safe-area-inset-bottom),16px)] space-y-3">
+      <RestScreen a={a} s={s} />
+      <div className="flex-1 grid place-items-center pt-20"><CountRing value={s.current} s={s} record={info.record} unit={a.unitLabel} pulseKey={n} /></div>
+      <div className="px-4 pb-[max(env(safe-area-inset-bottom),12px)] space-y-3">
+        <SetBar a={a} s={s} record={info.record} last={info.last} />
+        {n > limit && <p className="text-center text-xs text-fire">So viele in so kurzer Zeit? Gerade zählen höchstens {limit}.</p>}
         <div className="flex gap-2">
-          <input aria-label="Anzahl eingeben" inputMode="numeric" value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="Zahl eingeben"
-            className="min-w-0 flex-1 rounded-2xl bg-panel border border-line px-4 py-3 text-lg outline-none focus:border-neon" />
-          <Btn kind="ghost" className="shrink-0 !py-3" disabled={!typed} onClick={() => { setN(Number(typed)); setTyped(''); }}>Setzen</Btn>
+          <motion.button whileTap={{ scale: 0.93 }} onClick={() => add(-1)} aria-label="Eins weniger"
+            className={`w-20 shrink-0 ${s.enabled ? 'h-32' : 'h-40'} rounded-3xl bg-raised font-display text-3xl`}>−1</motion.button>
+          <motion.button whileTap={{ scale: 0.95 }} onClick={() => add(1)}
+            className={`flex-1 ${s.enabled ? 'h-32' : 'h-40'} rounded-3xl bg-hot font-display text-7xl text-white ${s.rest.running ? 'opacity-40' : ''}`}>+1</motion.button>
         </div>
-        {Math.max(n, Number(typed) || 0) > limit && <p className="text-center text-xs text-fire">So viele in so kurzer Zeit? Gerade zählen höchstens {limit}.</p>}
-        <div className="flex gap-2">
-          <Btn kind="ghost" className="flex-1" onClick={() => add(-1)}>−1</Btn>
-          <Btn kind="ghost" className="flex-1" onClick={() => add(5)}>+5</Btn>
-        </div>
-        <motion.button whileTap={{ scale: 0.93 }} onClick={() => add(1)}
-          className="w-full h-44 rounded-3xl bg-hot font-display text-7xl">+1</motion.button>
+        <button onClick={() => setTyping(true)} className="w-full py-1 text-sm text-mute underline">Zahl eintippen</button>
       </div>
+      {typing && (
+        <div className="fixed inset-0 z-[55] flex items-end bg-black/70" onClick={() => setTyping(false)}>
+          <div onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Zahl eintippen"
+            className="w-full max-w-lg mx-auto rounded-t-3xl bg-panel px-4 pt-5 pb-[max(env(safe-area-inset-bottom),16px)] space-y-3">
+            <div className="text-center">
+              <div className="font-display text-2xl">Zahl eintippen</div>
+              <div className="mt-1 text-sm text-mute">Gerade: {s.current} {a.unitLabel}{s.enabled ? ' in diesem Satz' : ''}</div>
+            </div>
+            <div className="flex gap-2">
+              <input autoFocus aria-label="Anzahl eingeben" inputMode="numeric" value={typed} onChange={(e) => setTyped(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                onKeyDown={(e) => { if (e.key === 'Enter') setTo(); }} placeholder="z. B. 25"
+                className="min-w-0 flex-1 rounded-2xl bg-bg border border-line px-4 py-3 text-lg outline-none focus:border-neon" />
+              <Btn className="shrink-0 !py-3" disabled={!typed} onClick={setTo}>Setzen</Btn>
+            </div>
+            {Number(typed) > limit && <p className="text-center text-xs text-fire">So viele in so kurzer Zeit? Gerade zählen höchstens {limit}.</p>}
+            <div className="grid grid-cols-2 gap-2">
+              <Btn kind="ghost" onClick={() => add(5)}>+5</Btn>
+              <Btn kind="ghost" onClick={() => add(10)}>+10</Btn>
+            </div>
+            <button onClick={() => setTyping(false)} className="w-full py-2 text-sm text-mute underline">Schließen</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-export function NoseTapLive({ activity: a, onFinish }: Props) {
+export function NoseTapLive({ activity: a, onFinish, sets: cfg }: Props) {
   const [n, setN] = useState(0);
   const last = useRef(0);
   const start = useRef(Date.now());
   const sec = useStopwatch();
   useWakeLock();
+  const info = useExerciseInfo(a);
+  const endRef = useRef(() => {});
+  const s = useSets(a, cfg, n, () => endRef.current());
   const tap = () => {
+    if (s.rest.running) return;
     const now = performance.now();
     if (now - last.current < 300) return; // Doppeltreffer der Nase ignorieren
     last.current = now;
     const v = n + 1;
     setN(v);
-    say(String(v)); sfx('rep'); buzz(40);
+    say(String(v - s.base)); sfx('rep'); buzz(40);
   };
-  const { end, sheet } = useEnd(n, onFinish, () => ({ activityId: a.id, mode: 'nosetap', start: start.current, end: Date.now(), reps: n, seconds: Math.round(sec) }), `${n} ${a.unitLabel} · ${fmtTime(sec)}`);
+  const { end, sheet } = useEnd(s.total, onFinish, () => ({ activityId: a.id, mode: 'nosetap', start: start.current, end: Date.now(), reps: s.total, seconds: Math.round(sec), sets: s.setList }), `${s.total} ${a.unitLabel} · ${fmtTime(sec)}`);
+  endRef.current = end;
   return (
     <div className="fixed inset-0 z-40 bg-bg">
       {sheet}
       <TopBar seconds={sec} onEnd={end} title="Nasen-Tap" />
+      <RestScreen a={a} s={s} />
       <motion.div onPointerDown={tap} whileTap={{ backgroundColor: 'rgba(255,107,53,0.25)' }}
         className="absolute inset-x-0 top-24 bottom-0 grid place-items-center touch-none">
         <div className="text-center pointer-events-none">
-          <BigCount n={n} label="Nase tippen = 1 Rep" pulseKey={n} />
-          <motion.div className="mx-auto mt-8 w-40 h-40 rounded-full border-4 border-neon/60" animate={{ scale: [1, 1.08, 1] }} transition={{ repeat: Infinity, duration: 1.4 }} />
+          <CountRing value={s.current} s={s} record={info.record} unit={a.unitLabel} pulseKey={n} />
+          <p className="mt-2 text-sm text-mute">Nase tippen = 1 Wiederholung</p>
         </div>
       </motion.div>
+      <div className="absolute inset-x-0 bottom-0 z-10 px-4 pb-[max(env(safe-area-inset-bottom),16px)]"><SetBar a={a} s={s} record={info.record} last={info.last} /></div>
     </div>
   );
 }
 
-export function SensorLive({ activity: a, onFinish }: Props) {
+export function SensorLive({ activity: a, onFinish, sets: cfg }: Props) {
   const counter = useRef(createTiltCounter());
   const [n, setN] = useState(0);
   const [tilt, setTilt] = useState(0);
@@ -80,6 +117,9 @@ export function SensorLive({ activity: a, onFinish }: Props) {
   const start = useRef(Date.now());
   const sec = useStopwatch();
   useWakeLock();
+  const info = useExerciseInfo(a);
+  const endRef = useRef(() => {});
+  const s = useSets(a, cfg, n, () => endRef.current());
   useEffect(() => {
     const on = (e: DeviceOrientationEvent) => {
       if (e.beta === null) return;
@@ -91,13 +131,16 @@ export function SensorLive({ activity: a, onFinish }: Props) {
     window.addEventListener('deviceorientation', on);
     return () => window.removeEventListener('deviceorientation', on);
   }, []);
-  const { end, sheet } = useEnd(n, onFinish, () => ({ activityId: a.id, mode: 'sensor', start: start.current, end: Date.now(), reps: n, seconds: Math.round(sec) }), `${n} ${a.unitLabel} · ${fmtTime(sec)}`);
+  const { end, sheet } = useEnd(s.total, onFinish, () => ({ activityId: a.id, mode: 'sensor', start: start.current, end: Date.now(), reps: s.total, seconds: Math.round(sec), sets: s.setList }), `${s.total} ${a.unitLabel} · ${fmtTime(sec)}`);
+  endRef.current = end;
   return (
     <div className="fixed inset-0 z-40 bg-bg flex flex-col">
       {sheet}
       <TopBar seconds={sec} onEnd={end} title="Sensor" />
-      <div className="flex-1 grid place-items-center pt-16"><BigCount n={n} label={a.unitLabel} pulseKey={n} /></div>
+      <RestScreen a={a} s={s} />
+      <div className="flex-1 grid place-items-center pt-20"><CountRing value={s.current} s={s} record={info.record} unit={a.unitLabel} pulseKey={n} /></div>
       <div className="px-6 pb-[max(env(safe-area-inset-bottom),20px)] space-y-3">
+        <SetBar a={a} s={s} record={info.record} last={info.last} />
         {!hasData && <p className="text-fire text-center">Keine Sensordaten – dieses Gerät hat evtl. keinen Neigungssensor.</p>}
         <div className="h-4 rounded-full bg-line overflow-hidden relative">
           <div className="absolute top-0 bottom-0 w-0.5 bg-white/60" style={{ left:`${(55 / 90) * 100}%` }} />
@@ -110,28 +153,37 @@ export function SensorLive({ activity: a, onFinish }: Props) {
   );
 }
 
-export function TimerLive({ activity: a, onFinish }: Props) {
+export function TimerLive({ activity: a, onFinish, sets: cfg }: Props) {
   const [running, setRunning] = useState(true);
+  // Während der Satzpause steht die Uhr
+  const [resting, setResting] = useState(false);
   const start = useRef(Date.now());
-  const sec = useStopwatch(running);
+  const sec = useStopwatch(running && !resting);
   const lastSaid = useRef(0);
   useWakeLock();
+  const info = useExerciseInfo(a);
+  const endRef = useRef(() => {});
+  const s = useSets(a, cfg, Math.floor(sec), () => endRef.current());
+  useEffect(() => setResting(s.rest.running), [s.rest.running]);
   useEffect(() => {
-    const s = Math.floor(sec);
-    if (running && s > 0 && s % 15 === 0 && s !== lastSaid.current) { lastSaid.current = s; say(`${s} Sekunden`); buzz(60); }
-  }, [sec, running]);
-  const { end, sheet } = useEnd(Math.floor(sec), onFinish, () => ({ activityId: a.id, mode: 'timer', start: start.current, end: Date.now(), seconds: Math.floor(sec) }), `${a.name} · ${fmtTime(sec)}`);
+    const c = s.current;
+    if (running && c > 0 && c % 15 === 0 && c !== lastSaid.current) { lastSaid.current = c; say(`${c} Sekunden`); buzz(60); }
+  }, [s.current, running]);
+  const { end, sheet } = useEnd(s.total, onFinish, () => ({ activityId: a.id, mode: 'timer', start: start.current, end: Date.now(), seconds: s.total, sets: s.setList }), `${a.name} · ${fmtTime(s.total)}`);
+  endRef.current = end;
   return (
     <div className="fixed inset-0 z-40 bg-bg flex flex-col">
       {sheet}
-      <TopBar seconds={sec} onEnd={end} title={a.name} />
-      <div className="flex-1 grid place-items-center">
-        <div className="text-center">
-          <div className="font-display text-[7rem] leading-none tabular-nums">{fmtTime(sec)}</div>
-          <div className="text-mute text-sm">{a.perMin ? 'Jede Minute gibt es Punkte' : 'Alle 5 Sekunden gibt es Punkte'}</div>
+      <TopBar onEnd={end} title={a.name} />
+      <RestScreen a={a} s={s} />
+      <div className="flex-1 grid place-items-center pt-20">
+        <div className="grid justify-items-center gap-2 text-center">
+          <CountRing value={s.current} text={fmtTime(s.current)} s={s} record={info.record} unit="gehalten" />
+          <div className="text-mute text-xs">{a.perMin ? 'Jede Minute gibt es Punkte' : 'Alle 5 Sekunden gibt es Punkte'}</div>
         </div>
       </div>
-      <div className="px-4 pb-[max(env(safe-area-inset-bottom),16px)]">
+      <div className="px-4 pb-[max(env(safe-area-inset-bottom),16px)] space-y-3">
+        <SetBar a={a} s={s} record={info.record} last={info.last} />
         <Btn kind={running ? 'ghost' : 'primary'} className="w-full !py-6 !text-3xl" onClick={() => setRunning(!running)}>{running ? 'Pause' : 'Weiter'}</Btn>
       </div>
     </div>

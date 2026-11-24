@@ -101,7 +101,7 @@ function CameraPlacement() {
         <rect x="52" y="47" width="16" height="9" rx="2" fill="#0e0e0d" stroke="#f3f0ea" strokeWidth="1" />
         <text x="76" y="40" fontSize="8" fill="#9a958c">ca. 2 m</text>
       </svg>
-      <p className="text-[13px] leading-snug text-mute">Draufsicht: Handy <b className="font-semibold text-ink">quer</b> neben dich.</p>
+      <p className="text-[13px] leading-snug text-mute">Draufsicht: Handy <b className="font-semibold text-ink">seitlich</b> neben dich, wie unten beschrieben.</p>
     </div>
   );
 }

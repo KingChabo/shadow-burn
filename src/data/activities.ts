@@ -13,7 +13,9 @@ export type ActivityId =
   | 'football' | 'yoga' | 'tennis' | 'dance' | 'pilates' | 'climbing' | 'volleyball' | 'basketball'
   | 'tabletennis' | 'badminton' | 'martial' | 'handball' | 'padel' | 'ski';
 
-export type Mode = 'camera' | 'sensor' | 'nosetap' | 'manual' | 'timer' | 'distance' | 'duration';
+export type Mode = 'camera' | 'sensor' | 'nosetap' | 'manual' | 'timer' | 'distance' | 'duration'
+  // ab 23.11.2026: Handy in der Hosentasche (Oberschenkel-Neigung), Sprung-Zähler (Beschleunigung), GPS live
+  | 'pocket' | 'jump' | 'gps';
 export type Category = 'kraft' | 'core' | 'cardio' | 'ausdauer' | 'sport';
 export type Unit = 'reps' | 'time' | 'distance';
 
@@ -93,13 +95,16 @@ export const CATEGORIES: { id: Category; name: string }[] = [
 ];
 
 export const MODE_INFO: Record<Mode, { name: string; desc: string; icon: IconName }> = {
-  camera: { name: 'Kamera', desc: 'Zählt automatisch · +20 % Formbonus', icon: 'camera' },
-  sensor: { name: 'Sensor', desc: 'Handy auf der Brust zählt', icon: 'tilt' },
+  camera: { name: 'Kamera', desc: 'Zählt selbst · +20 % Bonus', icon: 'camera' },
+  sensor: { name: 'Brust', desc: 'Handy auf der Brust', icon: 'tilt' },
   nosetap: { name: 'Nasen-Tap', desc: 'Nase tippt aufs Handy', icon: 'tap' },
   manual: { name: 'Manuell', desc: 'Selbst zählen', icon: 'hand' },
   timer: { name: 'Timer', desc: 'Stoppuhr', icon: 'timer' },
   distance: { name: 'Eintragen', desc: 'Strecke und Zeit eintragen', icon: 'route' },
   duration: { name: 'Eintragen', desc: 'Dauer nachher eintragen', icon: 'hand' },
+  pocket: { name: 'Hosentasche', desc: 'Handy in der Tasche', icon: 'phone' },
+  jump: { name: 'Sprung-Zähler', desc: 'Spürt jeden Sprung', icon: 'jump' },
+  gps: { name: 'GPS', desc: 'Strecke live messen', icon: 'pin' },
 };
 
 // ---------- Vorlagen-Posen (viewBox 0 0 200 120, Boden bei y = 110) ----------
@@ -477,7 +482,41 @@ const MORE: Activity[] = [
 ];
 
 /** Alle Übungen, je Kategorie nach Beliebtheit sortiert (beliebteste zuerst). */
-export const ACTIVITIES: Activity[] = [...BASE, ...MORE].sort((a, b) => b.pop - a.pop);
+/**
+ * Automatische Zähl-Modi (23.11.2026). Reihenfolge = Reihenfolge der Knöpfe, der erste ist Standard.
+ * Kamera: Regeln in features/pose/counters.ts, Hosentasche/Sprung: features/motion.ts, GPS: screens/live/GpsLive.tsx.
+ */
+const AUTO_MODES: Partial<Record<ActivityId, Mode[]>> = {
+  squat: ['camera', 'pocket', 'manual'],
+  lunge: ['camera', 'pocket', 'manual'],
+  splitsquat: ['pocket', 'manual'],
+  stepup: ['pocket', 'manual'],
+  jumpsquat: ['pocket', 'manual'],
+  wallsit: ['camera', 'pocket', 'timer'],
+  pullup: ['camera', 'manual'],
+  chinup: ['camera', 'manual'],
+  dip: ['camera', 'manual'],
+  burpee: ['camera', 'manual'],
+  glutebridge: ['camera', 'manual'],
+  mountain: ['camera', 'manual'],
+  highknees: ['camera', 'jump', 'manual'],
+  jacks: ['camera', 'jump', 'manual'],
+  jumprope: ['jump', 'manual'],
+  buttkicks: ['jump', 'manual'],
+  tuckjump: ['jump', 'manual'],
+  skater: ['jump', 'manual'],
+  jog: ['gps', 'distance'],
+  walk: ['gps', 'distance'],
+  sprint: ['gps', 'distance'],
+  bike: ['gps', 'distance'],
+  hike: ['gps', 'distance'],
+  nordic: ['gps', 'distance'],
+  inline: ['gps', 'distance'],
+};
+
+export const ACTIVITIES: Activity[] = [...BASE, ...MORE]
+  .map((a) => (AUTO_MODES[a.id] ? { ...a, modes: AUTO_MODES[a.id]! } : a))
+  .sort((a, b) => b.pop - a.pop);
 
 export const ACT: Record<ActivityId, Activity> = Object.fromEntries(ACTIVITIES.map((a) => [a.id, a])) as Record<ActivityId, Activity>;
 
@@ -493,6 +532,30 @@ export function setupHint(id: ActivityId, mode: Mode): string | null {
     return 'Handy hochkant, vor dir auf Brusthöhe. Hände über dem Kopf im Bild. Sind die Füße nicht drin, zählen nur die Arme.';
   if (mode === 'camera' && id === 'plank')
     return 'Handy quer, seitlich auf den Boden. Am besten Kopf bis Füße. Schulter und Hüfte reichen, dann wird die Linie nicht geprüft.';
+  if (mode === 'camera') {
+    const cam: Partial<Record<ActivityId, string>> = {
+      pullup: 'Handy hochkant, schräg vor der Stange auf den Boden (z. B. an eine Wasserflasche lehnen). Kopf und Hände müssen im Bild sein.',
+      dip: 'Handy quer, seitlich auf Schulterhöhe (Stuhl, Regal). Schulter, Ellbogen und Hand im Bild.',
+      lunge: 'Handy quer, 2–3 m seitlich auf Kniehöhe. Hüfte, Knie und Füße im Bild.',
+      highknees: 'Handy hochkant, vor dir auf Hüfthöhe. Hüfte und Knie im Bild.',
+      mountain: 'Handy quer, seitlich auf den Boden. Schulter, Hüfte und Knie im Bild.',
+      burpee: 'Handy hochkant, 3 m seitlich auf Hüfthöhe. Der ganze Körper muss reinpassen, auch die Arme beim Sprung.',
+      glutebridge: 'Handy quer, seitlich auf den Boden. Schulter, Hüfte und Knie im Bild.',
+      wallsit: 'Handy quer, seitlich auf Kniehöhe. Hüfte und Knie im Bild, am besten auch die Füße.',
+    };
+    return cam[id === 'chinup' ? 'pullup' : id] ?? null;
+  }
+  if (mode === 'pocket') {
+    if (id === 'wallsit') return 'Handy in die vordere Hosentasche. Kurz still stehen, bis es piept, dann runter an die Wand. Die Uhr läuft nur, solange der Oberschenkel waagerecht ist.';
+    if (id === 'lunge' || id === 'splitsquat') return 'Handy in die Hosentasche vom vorderen Bein. Kurz still stehen, bis es piept. Gezählt wird das Bein mit dem Handy, für die andere Seite das Handy umstecken.';
+    if (id === 'stepup') return 'Handy in die Hosentasche vom Bein, das aufsteigt. Kurz still stehen, bis es piept. Für die andere Seite das Handy umstecken.';
+    return 'Handy in die vordere Hosentasche (eng sitzende Hose ist am besten). Kurz still stehen, bis es piept, dann los.';
+  }
+  if (mode === 'jump') {
+    if (id === 'jumprope') return 'Handy in die Hosentasche oder fest mit dem Griff in die Hand. Kurz still stehen, bis es piept, dann springen.';
+    return 'Handy in die Hosentasche (eng sitzende Hose ist am besten). Kurz still stehen, bis es piept, dann los.';
+  }
+  if (mode === 'gps') return 'Draußen starten. Beim ersten Mal fragt das Handy, ob die App den Standort nutzen darf. Der Bildschirm bleibt während des Trainings an.';
   if (mode === 'sensor') return 'Handy flach auf die Brust, Bildschirm nach oben.';
   if (mode === 'nosetap') return 'Handy unter dein Gesicht, Nase tippt bei jeder Wdh.';
   return null;

@@ -63,6 +63,9 @@ export function SummaryScreen({ summary: s, onClose, onAgain }: { summary: Summa
           {w.km > 0 && w.seconds > 0 && <Stat v={fmtPace(w.seconds / 60 / w.km)} l="min/km" />}
           <Stat v={fmtTime(w.seconds)} l="Zeit" />
         </div>
+        {w.sets && w.sets.length > 1 && (
+          <p className="mt-2 text-center text-sm text-mute">{w.sets.length} Sätze: <b className="num text-ink">{w.sets.map((x) => (a.unit === 'time' ? fmtTime(x) : x)).join(' · ')}</b></p>
+        )}
         <div className="mt-3 space-y-1 text-sm">
           {rows.filter(([, v]) => v !== 0).map(([k, v]) => (
             <div key={k} className="flex justify-between"><span className="text-mute">{k}</span><span className={v < 0 ? 'text-bad' : ''}>{v > 0 ? '+' : ''}{v}</span></div>

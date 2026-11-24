@@ -1,7 +1,10 @@
+import { Assessment } from './Assessment';
+import { getAllow, setAllow, type Allow } from '../features/permissions';
 import { APP_DASH } from '../lib/brand';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useGame } from '../lib/store';
 import { Btn, Card, Header, Segmented } from '../components/ui';
+import { REST_GAMES } from '../features/restgames/engine';
 import { Icon } from '../components/Icon';
 import { exportAll, importAll, isBackupApp, wipeAll, type Settings } from '../lib/game';
 import { dayKey } from '../lib/date';
@@ -23,6 +26,8 @@ import { SHARE_DAYS, SHARE_DAYS_MAX, SHARE_POSTS, SHARE_POSTS_BT, shareDays, typ
 
 const GOALS = [30, 50, 100, 150, 200, 300, 500];
 
+type Page = 'training' | 'look' | 'friends' | 'data';
+
 type BIPEvent = Event & { prompt(): Promise<void> };
 
 export function SettingsScreen({ onClose }: { onClose: () => void }) {
@@ -33,6 +38,8 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [installEvt, setInstallEvt] = useState<BIPEvent | null>(null);
   const [legalOpen, setLegalOpen] = useState(false);
+  const [assess, setAssess] = useState(false);
+  const [page, setPage] = useState<Page | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
   // neuer Bildschirm: oben anfangen (sonst bleibt die Scrollposition der Ich-Seite)
@@ -76,6 +83,137 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
 
   const bt = bluetoothOn(g.settings);
 
+  if (assess) return (
+    <div className="pb-8">
+      <Header title="Fitness-Einstufung" onBack={() => setAssess(false)} />
+      <div className="px-4"><Assessment camera again onDone={async () => { await g.reload(); setAssess(false); setMsg('Einstufung gespeichert. Deine Tagesaufträge sind angepasst.'); }} /></div>
+    </div>
+  );
+
+  // Erste Seite: Name + vier Bereiche. Jeder Bereich ist eine eigene Seite (Zurück führt hierher).
+  const pages: Record<Page, { title: string; hint: string; body: ReactNode }> = {
+    training: { title: 'Training', hint: 'Tagesziel, Fitness-Einstufung, Erlaubnisse', body: (
+      <>
+        <Section>
+          <div>
+            <div className="flex items-baseline justify-between gap-3">
+              <span>Tagesziel</span>
+              <span className="text-xs text-mute">Ring auf Home · Streak ab {STREAK_MIN_POINTS} P</span>
+            </div>
+            <div className="-mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1 pb-1">
+              {GOALS.map((n) => {
+                const on = Math.max(STREAK_MIN_POINTS, g.settings.dailyGoal ?? STREAK_MIN_POINTS) === n;
+                return (
+                  <button key={n} onClick={() => void set({ dailyGoal: n })}
+                    className={`num shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold ${on ? 'bg-hot' : 'bg-raised text-mute'}`}>{n} P</button>
+                );
+              })}
+            </div>
+          </div>
+          <Btn kind="ghost" className="w-full !py-3" onClick={() => setAssess(true)}>Fitness-Einstufung neu machen</Btn>
+          <Permissions />
+          <div className="flex items-center justify-between gap-3">
+            <span>Muskelgrafik</span>
+            <Segmented className="w-44" value={g.settings.sex ?? 'm'} onChange={(v) => void set({ sex: v })}
+              options={[{ id: 'm', label: 'Mann' }, { id: 'f', label: 'Frau' }]} />
+          </div>
+        </Section>
+
+      </>
+    ) },
+    look: { title: 'Ton & Aussehen', hint: 'Design, Sounds, Ansagen, Vibration, Pausenspiel', body: (
+      <>
+        <Section>
+          <div className="flex items-center justify-between gap-3">
+            <span>Design</span>
+            <Segmented className="w-56" value={g.settings.look ?? 'auto'} onChange={(v) => void set({ look: v })}
+              options={[{ id: 'auto', label: 'Auto' }, { id: 'light', label: 'Hell' }, { id: 'dark', label: 'Dunkel' }]} />
+          </div>
+          <Toggle label="Blog-Seite" on={g.settings.blog !== false} onClick={() => void set({ blog: g.settings.blog === false })} />
+          <Toggle label="Sounds" on={g.settings.sound} onClick={() => void toggle('sound')} />
+          <Toggle label="Sprachansagen" on={g.settings.voice} onClick={() => void toggle('voice')} />
+          <Toggle label="Vibration" on={g.settings.vibration} onClick={() => void toggle('vibration')} />
+        </Section>
+        <Section>
+          <Toggle label="Spiele in der Satzpause" on={!!g.settings.restGame && g.settings.restGame !== 'off'}
+            onClick={() => void set({ restGame: g.settings.restGame && g.settings.restGame !== 'off' ? 'off' : 'on' })} />
+          <p className="-mt-2 text-xs text-mute">{g.settings.restGame && g.settings.restGame !== 'off'
+            ? `Am Anfang jeder Pause wählst du: ${REST_GAMES.map((x) => x.name).join(', ')} oder × für nur den Timer.`
+            : 'Aus: die Pause zeigt nur den Timer.'}</p>
+        </Section>
+
+      </>
+    ) },
+    friends: { title: 'Freunde & Teilen', hint: bleAvailable() ? 'Statistik, Blog, Bluetooth' : 'Statistik, Blog', body: (
+      <>
+        <Section>
+          <Toggle label="Freunde sehen meine Statistik" on={!!g.settings.shareStats} onClick={() => void set({ shareStats: !g.settings.shareStats })} />
+          <p className="-mt-2 text-xs text-mute">Ohne Körpergewicht. Gilt ab dem nächsten Scan.</p>
+          {g.settings.blog !== false && (
+            <>
+              <Toggle label="Blog beim Scannen mitschicken" on={g.settings.qrBlog !== false} onClick={() => void set({ qrBlog: g.settings.qrBlog === false })} />
+              <p className="-mt-2 text-xs text-mute">Ein Scan aktualisiert Rangliste und Blog. Aus: nur Rangliste.</p>
+            </>
+          )}
+          {g.settings.blog !== false && (
+            <More>
+              <ShareRange settings={g.settings} bt={bleAvailable() && bt} onChange={(d) => void set({ shareDays: d })} />
+            </More>
+          )}
+        </Section>
+
+        {bleAvailable() && (
+          <Section title="Bluetooth">
+            <Toggle label="Bluetooth-Austausch bei Treffen" on={bt} onClick={async () => {
+              setBtMsg('');
+              if (bt) { await set({ bluetooth: false }); return; }
+              const r = await ensureBlePermission();
+              if (!r.ok) { setBtMsg(r.msg ?? 'Bluetooth ist nicht verfügbar.'); await set({ bluetooth: false }); return; }
+              await set({ bluetooth: true });
+            }} />
+            <p className="-mt-2 text-xs text-mute">Tauscht dieselben Daten wie der QR-Code, aber per Bluetooth, wenn ihr euch trefft. Nur aktiv, solange „In der Nähe tauschen“ offen ist. Dein Name ist dann für Handys in der Nähe sichtbar.</p>
+            {btMsg && <p className="-mt-2 text-xs text-bad">{btMsg}</p>}
+            <More>
+              <div className={bt ? '' : 'pointer-events-none opacity-40'} aria-disabled={!bt}>
+                <Toggle label="Extra sichere Bluetooth-Übertragung" on={bluetoothSecure(g.settings)} onClick={() => { if (bt) void set({ btSecure: !g.settings.btSecure }); }} />
+                <p className="mt-1 text-xs text-mute">
+                  Der Tausch startet nur, wenn das andere Handy deinen QR-Code scannt (oder du seinen). Statt der Geräteliste koppelt ihr per Code, Anfragen ohne gültigen Code werden abgelehnt.
+                  {!bt && ' Erst Bluetooth-Austausch einschalten.'}
+                </p>
+              </div>
+            </More>
+          </Section>
+        )}
+
+      </>
+    ) },
+    data: { title: 'App & Daten', hint: apkUpdateAvailable() ? 'Update, Backup, Einführung' : 'Backup, Einführung', body: (
+      <>
+        <Section>
+          {apkUpdateAvailable() && <AppUpdate />}
+          {installEvt && <Btn className="w-full !py-3" onClick={() => { void installEvt.prompt(); setInstallEvt(null); }}><span className="flex items-center justify-center gap-2"><Icon name="install" /> Auf den Homescreen installieren</span></Btn>}
+          <Btn kind="ghost" className="w-full !py-3" onClick={startTour}>Einführung ansehen</Btn>
+          <Btn kind="ghost" className="w-full !py-3" onClick={doExport}>Backup exportieren</Btn>
+          <Btn kind="ghost" className="w-full !py-3" onClick={() => fileRef.current?.click()}>Backup importieren</Btn>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void doImport(f); e.target.value = ''; }} />
+          {msg && <p className="text-sm text-neon">{msg}</p>}
+          <More>
+            <AutoBackups onRestore={async (s) => { await importAll(s.json); await g.reload(); setMsg('Sicherung zurückgeholt.'); }} />
+            <Btn kind="danger" className="w-full !py-3" onClick={doWipe}>Alle Daten löschen</Btn>
+            <Btn kind="ghost" className="w-full !py-3" onClick={() => setLegalOpen(true)}>Open-Source-Lizenzen</Btn>
+          </More>
+        </Section>
+      </>
+    ) },
+  };
+  if (page) return (
+    <div ref={rootRef} className="pb-8">
+      <Header title={pages[page].title} onBack={() => setPage(null)} />
+      <div className="px-4 space-y-4">{pages[page].body}{msg && page !== 'data' && <p className="text-sm text-neon">{msg}</p>}</div>
+      <LegalOverlay open={legalOpen} onClose={() => setLegalOpen(false)} />
+    </div>
+  );
+
   return (
     <div ref={rootRef} className="pb-8">
       <Header title="Einstellungen" onBack={onClose} />
@@ -98,86 +236,20 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
           )}
         </Section>
 
-        <Section title="Training">
-          <div>
-            <div className="flex items-baseline justify-between gap-3">
-              <span>Tagesziel</span>
-              <span className="text-xs text-mute">Ring auf Home · Streak ab {STREAK_MIN_POINTS} P</span>
-            </div>
-            <div className="-mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1 pb-1">
-              {GOALS.map((n) => {
-                const on = Math.max(STREAK_MIN_POINTS, g.settings.dailyGoal ?? STREAK_MIN_POINTS) === n;
-                return (
-                  <button key={n} onClick={() => void set({ dailyGoal: n })}
-                    className={`num shrink-0 rounded-full px-3.5 py-1.5 text-sm font-semibold ${on ? 'bg-hot' : 'bg-raised text-mute'}`}>{n} P</button>
-                );
-              })}
-            </div>
+        <Card className="!py-1">
+          <div className="divide-y divide-line">
+            {(Object.keys(pages) as Page[]).map((k) => (
+              <button key={k} onClick={() => setPage(k)} className="flex w-full items-center gap-3 py-3 text-left">
+                <span className="min-w-0 flex-1">
+                  <b className="block font-semibold">{pages[k].title}</b>
+                  <span className="block truncate text-xs text-mute">{pages[k].hint}</span>
+                </span>
+                <Icon name="down" className="h-4 w-4 shrink-0 -rotate-90 text-mute" />
+              </button>
+            ))}
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span>Muskelgrafik</span>
-            <Segmented className="w-44" value={g.settings.sex ?? 'm'} onChange={(v) => void set({ sex: v })}
-              options={[{ id: 'm', label: 'Mann' }, { id: 'f', label: 'Frau' }]} />
-          </div>
-        </Section>
-
-        <Section title="Darstellung & Ton">
-          <div className="flex items-center justify-between gap-3">
-            <span>Design</span>
-            <Segmented className="w-56" value={g.settings.look ?? 'auto'} onChange={(v) => void set({ look: v })}
-              options={[{ id: 'auto', label: 'Auto' }, { id: 'light', label: 'Hell' }, { id: 'dark', label: 'Dunkel' }]} />
-          </div>
-          <Toggle label="Blog-Seite" on={g.settings.blog !== false} onClick={() => void set({ blog: g.settings.blog === false })} />
-          <Toggle label="Sounds" on={g.settings.sound} onClick={() => void toggle('sound')} />
-          <Toggle label="Sprachansagen" on={g.settings.voice} onClick={() => void toggle('voice')} />
-          <Toggle label="Vibration" on={g.settings.vibration} onClick={() => void toggle('vibration')} />
-        </Section>
-
-        <Section title="Teilen mit Freunden">
-          <Toggle label="Freunde sehen meine Statistik" on={!!g.settings.shareStats} onClick={() => void set({ shareStats: !g.settings.shareStats })} />
-          <p className="-mt-2 text-xs text-mute">Ohne Körpergewicht. Gilt ab dem nächsten Scan.</p>
-          {g.settings.blog !== false && (
-            <>
-              <Toggle label="Blog beim Scannen mitschicken" on={g.settings.qrBlog !== false} onClick={() => void set({ qrBlog: g.settings.qrBlog === false })} />
-              <p className="-mt-2 text-xs text-mute">Ein Scan aktualisiert Rangliste und Blog. Aus: nur Rangliste.</p>
-              <ShareRange settings={g.settings} bt={bleAvailable() && bt} onChange={(d) => void set({ shareDays: d })} />
-            </>
-          )}
-        </Section>
-
-        {bleAvailable() && (
-          <Section title="Bluetooth">
-            <Toggle label="Bluetooth-Austausch bei Treffen" on={bt} onClick={async () => {
-              setBtMsg('');
-              if (bt) { await set({ bluetooth: false }); return; }
-              const r = await ensureBlePermission();
-              if (!r.ok) { setBtMsg(r.msg ?? 'Bluetooth ist nicht verfügbar.'); await set({ bluetooth: false }); return; }
-              await set({ bluetooth: true });
-            }} />
-            <p className="-mt-2 text-xs text-mute">Tauscht dieselben Daten wie der QR-Code, aber per Bluetooth, wenn ihr euch trefft. Nur aktiv, solange „In der Nähe tauschen“ offen ist. Dein Name ist dann für Handys in der Nähe sichtbar.</p>
-            {btMsg && <p className="-mt-2 text-xs text-bad">{btMsg}</p>}
-            <div className={bt ? '' : 'pointer-events-none opacity-40'} aria-disabled={!bt}>
-              <Toggle label="Extra sichere Bluetooth-Übertragung" on={bluetoothSecure(g.settings)} onClick={() => { if (bt) void set({ btSecure: !g.settings.btSecure }); }} />
-              <p className="mt-1 text-xs text-mute">
-                Der Tausch startet nur, wenn das andere Handy deinen QR-Code scannt (oder du seinen). Statt der Geräteliste koppelt ihr per Code, Anfragen ohne gültigen Code werden abgelehnt.
-                {!bt && ' Erst Bluetooth-Austausch einschalten.'}
-              </p>
-            </div>
-          </Section>
-        )}
-
-        <Section title="App & Daten">
-          {apkUpdateAvailable() && <AppUpdate />}
-          {installEvt && <Btn className="w-full !py-3" onClick={() => { void installEvt.prompt(); setInstallEvt(null); }}><span className="flex items-center justify-center gap-2"><Icon name="install" /> Auf den Homescreen installieren</span></Btn>}
-          <Btn kind="ghost" className="w-full !py-3" onClick={startTour}>Einführung ansehen</Btn>
-          <Btn kind="ghost" className="w-full !py-3" onClick={doExport}>Backup exportieren</Btn>
-          <Btn kind="ghost" className="w-full !py-3" onClick={() => fileRef.current?.click()}>Backup importieren</Btn>
-          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void doImport(f); e.target.value = ''; }} />
-          {msg && <p className="text-sm text-neon">{msg}</p>}
-          <AutoBackups onRestore={async (s) => { await importAll(s.json); await g.reload(); setMsg('Sicherung zurückgeholt.'); }} />
-          <Btn kind="danger" className="w-full !py-3" onClick={doWipe}>Alle Daten löschen</Btn>
-          <Btn kind="ghost" className="w-full !py-3" onClick={() => setLegalOpen(true)}>Open-Source-Lizenzen</Btn>
-        </Section>
+        </Card>
+        {msg && <p className="text-sm text-neon">{msg}</p>}
       </div>
       <LegalOverlay open={legalOpen} onClose={() => setLegalOpen(false)} />
     </div>
@@ -265,10 +337,40 @@ function AutoBackups({ onRestore }: { onRestore: (s: Snapshot) => Promise<void> 
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/** Bewegungssensor und Standort: erst beim ersten Gebrauch erlaubt, hier zurücknehmen */
+function Permissions() {
+  const [allow, set] = useState<Allow | null>(null);
+  useEffect(() => { void getAllow().then(set); }, []);
+  if (!allow) return null;
+  const row = (kind: 'motion' | 'location', label: string, what: string) => (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0"><span>{label}</span><p className="text-xs text-mute">{allow[kind] ? 'Erlaubt' : 'Wird beim ersten Gebrauch gefragt'} · {what}</p></div>
+      {allow[kind] && <button className="shrink-0 rounded-full bg-raised px-3 py-1.5 text-sm" onClick={async () => set(await setAllow(kind, false))}>Zurücknehmen</button>}
+    </div>
+  );
+  return (
+    <div className="space-y-3">
+      {row('motion', 'Bewegungssensor', 'Hosentasche, Sprünge, Sit-ups')}
+      {row('location', 'Standort (GPS)', 'Strecke live messen')}
+      {allow.location && <p className="text-xs text-mute">Den Standort ganz sperren geht in den Handy-Einstellungen unter Apps.</p>}
+    </div>
+  );
+}
+
+/** Seltene Einstellungen: zugeklappt unter "Mehr Optionen" */
+function More({ children }: { children: ReactNode }) {
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center justify-between text-sm text-mute">Mehr Optionen<Icon name="down" className="h-4 w-4 transition-transform group-open:rotate-180" /></summary>
+      <div className="mt-3 space-y-3">{children}</div>
+    </details>
+  );
+}
+
+function Section({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section>
-      <p className="kicker mb-2 px-1">{title}</p>
+      {title && <p className="kicker mb-2 px-1">{title}</p>}
       <Card className="space-y-3">{children}</Card>
     </section>
   );

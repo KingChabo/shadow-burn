@@ -15,14 +15,15 @@ import { finishWorkout, type Summary, type WorkoutInput } from '../lib/game';
 import { Gym } from './Gym';
 import { Plans } from './Plans';
 import { searchList } from '../lib/search';
+import type { LiveSets } from '../lib/sets';
 
 type Stage =
   | { s: 'select' }
   | { s: 'gym' }
   | { s: 'plans' }
   | { s: 'setup'; a: Activity }
-  | { s: 'countdown'; a: Activity; mode: Mode }
-  | { s: 'live'; a: Activity; mode: Mode }
+  | { s: 'countdown'; a: Activity; mode: Mode; sets?: LiveSets }
+  | { s: 'live'; a: Activity; mode: Mode; sets?: LiveSets }
   | { s: 'summary'; summary: Summary };
 
 export function Training({ initial, onFullscreen, onDone }: { initial?: ActivityId; onFullscreen: (b: boolean) => void; onDone: () => void }) {
@@ -60,16 +61,17 @@ export function Training({ initial, onFullscreen, onDone }: { initial?: Activity
       return <Gym top={top} onBack={() => switchKind('body')} onDone={onDone} />;
     case 'setup':
       return (
-        <Setup activity={stage.a} onBack={() => setStage({ s: 'select' })}
-          onStart={(mode) => {
-            void g.setPrefs({ ...g.prefs, lastMode: { ...g.prefs.lastMode, [stage.a.id]: mode } });
-            setStage(skipsCountdown(mode) ? { s: 'live', a: stage.a, mode } : { s: 'countdown', a: stage.a, mode });
+        <Setup activity={stage.a} withSets onBack={() => setStage({ s: 'select' })}
+          onStart={(mode, sets) => {
+            // Mit Sätzen speichert Setup die Wahl selbst (inkl. Modus)
+            if (!sets) void g.setPrefs({ ...g.prefs, lastMode: { ...g.prefs.lastMode, [stage.a.id]: mode } });
+            setStage(skipsCountdown(mode) ? { s: 'live', a: stage.a, mode, sets } : { s: 'countdown', a: stage.a, mode, sets });
           }} />
       );
     case 'countdown':
-      return <Countdown onDone={() => setStage({ s: 'live', a: stage.a, mode: stage.mode })} preloadCamera={stage.mode === 'camera'} />;
+      return <Countdown onDone={() => setStage({ s: 'live', a: stage.a, mode: stage.mode, sets: stage.sets })} preloadCamera={stage.mode === 'camera'} />;
     case 'live':
-      return <LiveRouter activity={stage.a} mode={stage.mode} onFinish={finish} onManual={() => setStage({ s: 'live', a: stage.a, mode: 'manual' })} />;
+      return <LiveRouter activity={stage.a} mode={stage.mode} sets={stage.sets} onFinish={finish} onManual={() => setStage({ s: 'live', a: stage.a, mode: 'manual', sets: stage.sets })} />;
     case 'summary':
       return <SummaryScreen summary={stage.summary} onClose={onDone} onAgain={() => setStage({ s: 'setup', a: ACT[stage.summary.workout.activityId] })} />;
   }

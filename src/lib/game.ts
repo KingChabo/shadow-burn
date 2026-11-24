@@ -12,10 +12,15 @@ import { cosLookOf, normalizeCos, type CosState } from './cosmetics';
 import { bodyPartShare, pointsByCategory, pointsPerDay, totals, weeklyPoints } from './stats';
 import type { GymLog } from './db';
 import { undoSideEffects } from './undo';
+import { bestOfSets, cleanSetList, type SetMode, type SetPlan } from './sets';
+import { ensureDayQuests } from './dayQuests';
+import { trackOf, type QuestLevels, type Track } from './fitness';
 
 export interface Wallet { points: number; gems: number; xp: number }
 export interface Profile { name: string; createdAt: number }
 export interface Settings {
+  /** Spiele in der Satzpause; fehlt/'off' = aus (Standard). Gewählt wird in jeder Pause neu. */
+  restGame?: 'off' | 'on' | 'laeufer' | 'roehre' | 'flieger';
   sound: boolean; voice: boolean; vibration: boolean;
   /** Freunde sehen über meinen QR-Code auch meine Statistik (Annahme: standardmäßig aus) */
   shareStats?: boolean;
@@ -36,7 +41,15 @@ export interface Settings {
   /** Extra sichere Bluetooth-Übertragung: nur Kopplung per QR-Code, Anfragen ohne Code werden abgelehnt. Standard: aus */
   btSecure?: boolean;
 }
-export interface Prefs { favorites: ActivityId[]; lastMode: Partial<Record<ActivityId, Mode>>; /** zuletzt gewählte Trainingsart */ kind?: 'body' | 'gym' | 'plans' }
+export interface Prefs {
+  favorites: ActivityId[]; lastMode: Partial<Record<ActivityId, Mode>>; /** zuletzt gewählte Trainingsart */ kind?: 'body' | 'gym' | 'plans';
+  /** Sätze vorher festlegen ('plan') oder frei trainieren und danach erfassen ('free', Standard) */
+  setMode?: SetMode;
+  /** Zuletzt geplante Sätze je Übung (ohne Gerät) */
+  setPlans?: Partial<Record<string, SetPlan>>;
+  /** Pause zwischen Geräte-Sätzen in Sekunden (geplanter Modus) */
+  gymRest?: number;
+}
 /** Rekorde: reps = max Reps, seconds = längste Zeit, km = längste Distanz, pace = schnellste min/km */
 export type Records = Partial<Record<ActivityId, { reps?: number; seconds?: number; km?: number; pace?: number }>>;
 export interface LockNotice { usedLocks: number; usedRest?: boolean; broken: boolean; lostStreak: number; day: string }
@@ -54,6 +67,8 @@ export interface WorkoutInput {
   invalid?: number;
   seconds?: number;
   km?: number;
+  /** Einzelne Sätze (Wdh. bzw. Sekunden); reps/seconds sind die Summe */
+  sets?: number[];
 }
 
 export interface Summary {
@@ -96,13 +111,17 @@ function recordCheck(activityId: ActivityId, rec: Records, w: WorkoutInput, pace
   let text: string | null = null;
   // Sportarten nach Dauer (Fußball, Yoga …): längste Einheit ist kein Rekord, sonst lohnt sich Aufrunden
   if (ACT[activityId].perMin) return { isRecord, text, next: undefined };
+  // Rekord = am meisten am Stück: bei mehreren Sätzen zählt der beste Satz
+  const multi = !!w.sets && w.sets.length > 1;
   if (unit === 'reps' && (w.reps ?? 0) > 0) {
-    if (prev.reps !== undefined && (w.reps ?? 0) > prev.reps) { isRecord = true; text = `${w.reps} Wiederholungen (vorher ${prev.reps})`; }
-    next.reps = Math.max(prev.reps ?? 0, w.reps ?? 0);
+    const best = bestOfSets(w.sets, w.reps ?? 0);
+    if (prev.reps !== undefined && best > prev.reps) { isRecord = true; text = `${best} Wiederholungen${multi ? ' am Stück' : ''} (vorher ${prev.reps})`; }
+    next.reps = Math.max(prev.reps ?? 0, best);
   }
   if (unit === 'time' && (w.seconds ?? 0) > 0) {
-    if (prev.seconds !== undefined && (w.seconds ?? 0) > prev.seconds) { isRecord = true; text = `${w.seconds} s (vorher ${prev.seconds} s)`; }
-    next.seconds = Math.max(prev.seconds ?? 0, w.seconds ?? 0);
+    const best = bestOfSets(w.sets, w.seconds ?? 0);
+    if (prev.seconds !== undefined && best > prev.seconds) { isRecord = true; text = `${best} s${multi ? ' am Stück' : ''} (vorher ${prev.seconds} s)`; }
+    next.seconds = Math.max(prev.seconds ?? 0, best);
   }
   if (unit === 'distance' && (w.km ?? 0) > 0) {
     if (prev.km !== undefined && (w.km ?? 0) > prev.km) { isRecord = true; text = `${w.km} km – längste Strecke`; }
@@ -128,6 +147,11 @@ export async function finishWorkout(w: WorkoutInput, rng: () => number = Math.ra
     const pointsTodayBefore = todays.reduce((s, x) => s + x.points, 0) + gymToday.reduce((s, x) => s + x.points, 0);
     const repsIn = w.reps;
     w = { ...w, reps: w.reps === undefined ? undefined : plausibleReps(w.reps, w.seconds ?? 0, w.mode) };
+    // Sätze müssen zur Summe passen; wurde gekürzt oder passt es nicht, gilt alles als ein Satz
+    const sets = cleanSetList(w.sets);
+    const sum = sets?.reduce((a, b) => a + b, 0);
+    const timedAct = ACT[w.activityId].unit === 'time';
+    w = { ...w, sets: sets && sum === (timedAct ? w.seconds : w.reps) ? sets : undefined };
     // Strecke gegen Tippfehler/Schummeln prüfen (zu weit oder schneller als Weltrekord)
     if (w.km !== undefined) w = { ...w, km: plausibleKm(w.activityId, w.km, w.seconds ?? 0) };
 
@@ -172,16 +196,22 @@ export async function finishWorkout(w: WorkoutInput, rng: () => number = Math.ra
       isRecord: rc.isRecord,
       breakdown,
       gemAwards: [],
+      ...(w.sets ? { sets: w.sets } : {}),
     };
 
     // Tagesaufträge
     const questsCompleted: string[] = [];
     const after = [...todays, workout];
-    for (const q of questsFor(today, await getKV<QuestSwap | null>('questSwap', null))) {
+    const dayQuests = await ensureDayQuests(today, w.end);
+    const levelsUp: QuestLevels = {};
+    for (const q of questsFor(today, await getKV<QuestSwap | null>('questSwap', null), dayQuests)) {
       if (claimed.includes(q.id)) continue;
       if (questProgress(q, after) >= q.target) {
         questsCompleted.push(q.label);
         claimed.push(q.id);
+        // Fortschritt im Bereich: künftige Aufträge werden etwas schwerer
+        const t = trackOf(q.activityId);
+        if (t) levelsUp[t] = (levelsUp[t] ?? 0) + 1;
         gems.push({ reason: `Tagesauftrag: ${q.label}`, amount: 2 });
       }
     }
@@ -197,6 +227,11 @@ export async function finishWorkout(w: WorkoutInput, rng: () => number = Math.ra
     await setKV('streak', streak);
     await setKV('records', rc.next ? { ...records, [w.activityId]: rc.next } : records);
     await setKV('questsClaimed', claimed.slice(-60));
+    if (Object.keys(levelsUp).length) {
+      const lv = await getKV<QuestLevels>('questLevels', {});
+      for (const t of Object.keys(levelsUp) as Track[]) lv[t] = (lv[t] ?? 0) + levelsUp[t]!;
+      await setKV('questLevels', lv);
+    }
 
     return {
       workout,
@@ -214,6 +249,12 @@ export async function finishWorkout(w: WorkoutInput, rng: () => number = Math.ra
       repsCappedFrom: repsIn !== undefined && w.reps !== undefined && w.reps < repsIn ? repsIn : undefined,
     };
   });
+}
+
+/** Letztes Training einer Übung ohne Gerät (für „Letztes Mal“) */
+export async function lastWorkoutFor(activityId: ActivityId): Promise<Workout | undefined> {
+  const ws = await db.workouts.where('activityId').equals(activityId).toArray();
+  return ws.sort((a, b) => b.start - a.start)[0];
 }
 
 /** Kennzeichen in Sicherungsdateien. Ältere Sicherungen (App hieß früher PHANTOM) tragen noch 'phantom'. */
@@ -383,8 +424,9 @@ export async function deleteWorkout(id: number, now = new Date()): Promise<void>
     const rest = await db.workouts.where('activityId').equals(wk.activityId).toArray();
     const r: NonNullable<Records[ActivityId]> = {};
     for (const x of rest) {
-      if (x.reps > 0) r.reps = Math.max(r.reps ?? 0, x.reps);
-      if (x.seconds > 0 && ACT[x.activityId].unit === 'time') r.seconds = Math.max(r.seconds ?? 0, x.seconds);
+      // Rekord = bester Satz (ältere Einträge ohne Sätze: das ganze Training)
+      if (x.reps > 0) r.reps = Math.max(r.reps ?? 0, bestOfSets(ACT[x.activityId].unit === 'reps' ? x.sets : undefined, x.reps));
+      if (x.seconds > 0 && ACT[x.activityId].unit === 'time') r.seconds = Math.max(r.seconds ?? 0, bestOfSets(x.sets, x.seconds));
       if (x.km > 0) {
         r.km = Math.max(r.km ?? 0, x.km);
         if (x.km >= 1 && x.seconds > 0) r.pace = Math.min(r.pace ?? Infinity, x.seconds / 60 / x.km);

@@ -21,7 +21,7 @@ export function Home({ onStart }: { onStart: (id: ActivityId) => void }) {
   const doneToday = g.streak.lastActiveDay === today;
   const pointsToday = g.todays.reduce((s, w) => s + w.points, 0) + g.gymPointsToday;
   const h = Math.floor(hoursLeftToday());
-  const quests = questsFor(today, g.questSwap);
+  const quests = questsFor(today, g.questSwap, g.dayQuests);
   const canSwap = g.questSwap?.day !== today;
 
   let motivation: string;
@@ -144,6 +144,7 @@ export function Home({ onStart }: { onStart: (id: ActivityId) => void }) {
         <h2 className="font-sport text-xl font-semibold">Tagesaufträge</h2>
         <span className="kicker flex items-center gap-1 !text-[rgb(var(--hot))]">+2 <GemIcon className="h-3 w-3" /> je</span>
       </div>
+      <p className="-mt-1 px-1 text-xs text-mute">Ausgesucht für Muskeln, die heute erholt sind.</p>
       <Card className="!py-1">
         <div className="divide-y divide-line">
           {quests.map((q) => {

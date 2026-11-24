@@ -20,6 +20,8 @@ export interface Workout {
   isRecord: boolean;
   breakdown: ScoreBreakdown;
   gemAwards: GemAward[];
+  /** Einzelne Sätze (Wdh. bzw. Sekunden), nur wenn es mehr als einer war. Ältere Einträge haben keine. */
+  sets?: number[];
 }
 
 export interface KV { key: string; value: unknown }

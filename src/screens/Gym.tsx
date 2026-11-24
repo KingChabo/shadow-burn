@@ -10,7 +10,12 @@ import { searchList } from '../lib/search';
 import { GymGuide } from '../components/GymGuide';
 import { Icon } from '../components/Icon';
 import { buzz, sfx } from '../lib/fx';
-import { db } from '../lib/db';
+import { db, getKV } from '../lib/db';
+import { beatsRecord, type GymRecords } from '../lib/gym';
+import { RestPanel, useRest } from '../components/RestTimer';
+import { clampRest, DEFAULT_REST, fmtSec, REST_STEP, type SetMode } from '../lib/sets';
+import { Segmented } from '../components/ui';
+
 
 type Stage = { s: 'list' } | { s: 'log'; ex: GymExercise } | { s: 'summary'; sum: GymSummary; ex: GymExercise };
 
@@ -134,18 +139,44 @@ const cleanNum = (v: string, decimals: boolean) => {
 function LogSets({ ex, onBack, onSaved }: { ex: GymExercise; onBack: () => void; onSaved: (s: GymSummary) => void }) {
   const g = useGame();
   const [start] = useState(Date.now());
-  const [rows, setRows] = useState<{ reps: string; kg: string; warmup?: boolean }[]>([{ reps: '', kg: '' }]);
+  const [rows, setRows] = useState<{ reps: string; kg: string; warmup?: boolean; done?: boolean }[]>([{ reps: '', kg: '' }]);
   const [prev, setPrev] = useState<GymLog | undefined>();
+  const [rec, setRec] = useState<GymRecords[string] | undefined>();
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // Sätze vorher festlegen (abhaken, Pause startet von selbst) oder frei eintragen
+  const [mode, setModeState] = useState<SetMode>(g.prefs.setMode ?? 'free');
+  const restSec = clampRest(g.prefs.gymRest ?? DEFAULT_REST);
+  const rest = useRest();
 
   useEffect(() => {
+    void getKV<GymRecords>('gymRecords', {}).then((r) => setRec(r[ex.id]));
     lastLogFor(ex.id).then((l) => {
       setPrev(l);
-      // Vorschlag: so viele Sätze wie letztes Mal, mit demselben Gewicht
-      if (l) setRows(l.sets.map((s) => ({ reps: '', kg: s.kg ? String(s.kg).replace('.', ',') : '', warmup: s.warmup })));
+      // Vorschlag: so viele Sätze wie letztes Mal, mit demselben Gewicht (geplant: auch dieselben Wdh.)
+      if (l) setRows(l.sets.map((s) => ({ reps: (g.prefs.setMode ?? 'free') === 'plan' ? String(s.reps) : '', kg: s.kg ? String(s.kg).replace('.', ',') : '', warmup: s.warmup })));
+      else if ((g.prefs.setMode ?? 'free') === 'plan') setRows([0, 1, 2].map(() => ({ reps: '10', kg: '' })));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ex.id]);
+
+  const setMode = (m: SetMode) => {
+    setModeState(m);
+    void g.setPrefs({ ...g.prefs, setMode: m });
+    // Geplant: leere Wiederholungen mit dem letzten Mal (oder 10) vorbelegen
+    if (m === 'plan') setRows((r) => r.map((x, j) => (x.reps ? x : { ...x, reps: String(prev?.sets[j]?.reps ?? 10) })));
+  };
+  const setRest = (d: number) => void g.setPrefs({ ...g.prefs, gymRest: clampRest(restSec + d) });
+  /** Satz abhaken: im geplanten Modus startet danach sofort die Pause */
+  const tick = (i: number) => {
+    const wasDone = rows[i].done;
+    setRows((r) => r.map((x, j) => (j === i ? { ...x, done: !x.done } : x)));
+    if (!wasDone) {
+      sfx('success'); buzz([60, 40, 60]);
+      const more = rows.some((x, j) => j !== i && !x.done);
+      if (more) rest.start(restSec);
+    }
+  };
 
   const sets = cleanSets(rows.map((r) => ({ reps: parseNum(r.reps), kg: parseNum(r.kg), warmup: r.warmup })));
   const toggleWarm = (i: number) => setRows((r) => r.map((x, j) => (j === i ? { ...x, warmup: !x.warmup } : x)));
@@ -184,30 +215,63 @@ function LogSets({ ex, onBack, onSaved }: { ex: GymExercise; onBack: () => void;
           </Card>
         )}
         {prevHint && <HintCard hint={prevHint} onApply={prevHint.to > 0 ? applyHint : undefined} />}
+        <Card className="flex items-center gap-2 !py-3 text-sm">
+          <Icon name="trophy" className="h-5 w-5 shrink-0 text-fire" />
+          <span className="text-mute">Dein Rekord:</span>
+          <b>{rec && rec.kg > 0 ? `${rec.reps} × ${fmtKg(rec.kg)}` : 'noch keiner'}</b>
+          {rec && rec.e1rm > 0 && <span className="ml-auto text-xs text-mute">Max. ca. {fmtKg(Math.round(rec.e1rm))}</span>}
+        </Card>
 
         <Card className="space-y-2">
-          <div className="grid grid-cols-[2rem_1fr_1fr_2.5rem] gap-2 px-1 text-xs text-mute">
-            <span>Satz</span><span>Wdh.</span><span>kg</span><span />
+          <Segmented value={mode} onChange={setMode} className="!bg-raised !shadow-none"
+            options={[{ id: 'free', label: 'Frei eintragen' }, { id: 'plan', label: 'Vorher festlegen' }]} />
+          <p className="px-1 text-xs text-mute">{mode === 'plan' ? 'Sätze planen, nach jedem Satz abhaken. Die Pause startet dann von selbst.' : 'Nach jedem Satz eintragen. Pause per Knopf.'}</p>
+          <div className={`grid ${mode === 'plan' ? 'grid-cols-[2rem_1fr_1fr_2.5rem_2.5rem]' : 'grid-cols-[2rem_1fr_1fr_2.5rem]'} gap-2 px-1 text-xs text-mute`}>
+            <span>Satz</span><span>Wdh.</span><span>kg</span>{mode === 'plan' && <span />}<span />
           </div>
           {rows.map((r, i) => {
             const pr = prev?.sets[i];
+            const record = !r.warmup && beatsRecord(rec, parseNum(r.reps), parseNum(r.kg));
             return (
-              <div key={i} className="grid grid-cols-[2rem_1fr_1fr_2.5rem] items-center gap-2">
+              <div key={i}>
+              <div className={`grid ${mode === 'plan' ? 'grid-cols-[2rem_1fr_1fr_2.5rem_2.5rem]' : 'grid-cols-[2rem_1fr_1fr_2.5rem]'} items-center gap-2 ${r.done ? 'opacity-60' : ''}`}>
                 <button onClick={() => toggleWarm(i)} aria-label={r.warmup ? `Satz ${i + 1}: Aufwärmsatz, antippen für Arbeitssatz` : `Satz ${i + 1}: antippen für Aufwärmsatz`}
                   className={`num grid h-10 place-items-center rounded-lg font-display text-lg ${r.warmup ? 'bg-volt/20 text-volt' : 'text-mute'}`}>{r.warmup ? 'A' : i + 1}</button>
                 <input inputMode="numeric" value={r.reps} onChange={(e) => upd(i, 'reps', e.target.value)} placeholder={pr ? String(pr.reps) : '12'}
                   className="num w-full rounded-xl bg-raised px-3 py-3 text-center text-lg outline-none ring-1 ring-transparent placeholder:text-mute focus:ring-neon/60" />
                 <input inputMode="decimal" value={r.kg} onChange={(e) => upd(i, 'kg', e.target.value)} placeholder={pr ? String(pr.kg).replace('.', ',') : '0'}
                   className="num w-full rounded-xl bg-raised px-3 py-3 text-center text-lg outline-none ring-1 ring-transparent placeholder:text-mute focus:ring-neon/60" />
+                {mode === 'plan' && (
+                  <button aria-label={r.done ? `Satz ${i + 1} wieder öffnen` : `Satz ${i + 1} geschafft`} disabled={!(parseNum(r.reps) > 0)} onClick={() => tick(i)}
+                    className={`grid h-10 w-10 place-items-center rounded-full disabled:opacity-30 ${r.done ? 'bg-good text-white' : 'bg-raised text-mute'}`}>
+                    <Icon name="check" className="h-5 w-5" strokeWidth={3} />
+                  </button>
+                )}
                 <button aria-label="Satz löschen" disabled={rows.length === 1} onClick={() => setRows((x) => x.filter((_, j) => j !== i))}
                   className="grid h-10 w-10 place-items-center rounded-full text-mute disabled:opacity-30 active:bg-raised">
                   <Icon name="x" className="h-4 w-4" />
                 </button>
               </div>
+              {(pr || record) && (
+                <p className="mt-0.5 pl-10 text-[11px] text-mute">
+                  {pr && <>Letztes Mal {pr.warmup ? 'A ' : ''}{pr.reps} × {fmtKg(pr.kg)}</>}
+                  {record && <b className="ml-2 text-fire">Neuer Rekord!</b>}
+                </p>
+              )}
+              </div>
             );
           })}
           <button onClick={addRow} className="w-full rounded-xl border border-dashed border-line py-2.5 text-sm text-mute">+ Satz hinzufügen</button>
-          <RestTimer />
+          {mode === 'plan' ? (
+            <div className="flex items-center gap-2 pt-1 text-sm">
+              <span className="flex-1 text-mute">Pause nach jedem Satz</span>
+              <button aria-label="Pause kürzer" onClick={() => setRest(-REST_STEP)} className="grid h-9 w-9 place-items-center rounded-full bg-raised font-semibold">−</button>
+              <span className="num w-14 text-center font-display text-lg">{fmtSec(restSec)}</span>
+              <button aria-label="Pause länger" onClick={() => setRest(REST_STEP)} className="grid h-9 w-9 place-items-center rounded-full bg-raised font-semibold">+</button>
+            </div>
+          ) : !rest.running && (
+            <button onClick={() => rest.start(DEFAULT_REST)} className="w-full rounded-xl bg-raised py-3 text-sm font-semibold text-neon">Pause 1:30 starten</button>
+          )}
           <p className="px-1 text-xs text-mute">Nummer antippen = Aufwärmsatz (A)</p>
           {tooMuch && <p className="px-1 text-xs text-fire">Max. {MAX_REPS} Wdh. und {MAX_KG} kg pro Satz.</p>}
           {rounded && <p className="px-1 text-xs text-mute">Wird auf 0,25 kg gerundet.</p>}
@@ -215,7 +279,9 @@ function LogSets({ ex, onBack, onSaved }: { ex: GymExercise; onBack: () => void;
 
         {err && <p className="text-sm text-bad">{err}</p>}
         {/* Speichern bleibt unten sichtbar, auch wenn man scrollt */}
-        <div className="sticky bottom-3 z-10 flex gap-2">
+        <div className="sticky bottom-3 z-10 space-y-2">
+        <RestPanel rest={rest} next={(() => { const n = rows.findIndex((x) => !x.done); return mode === 'plan' && n >= 0 && rows[n].reps ? `Danach Satz ${n + 1}: ${rows[n].reps} × ${rows[n].kg || 0} kg` : undefined; })()} />
+        <div className="flex gap-2">
           {/* Löschen: nichts speichern, z. B. wenn nur ein Freund ausprobiert hat */}
           <Btn kind="danger" className="shrink-0 !bg-panel !px-4" disabled={busy}
             onClick={() => { if (!rows.some((r) => r.reps) || window.confirm('Eingetragene Sätze löschen? Es wird nichts gespeichert und es gibt keine Punkte.')) onBack(); }}>
@@ -225,36 +291,8 @@ function LogSets({ ex, onBack, onSaved }: { ex: GymExercise; onBack: () => void;
             Speichern{sets.length ? ` · ca. +${preview} Punkte` : ''}
           </Btn>
         </div>
+        </div>
       </div>
-    </div>
-  );
-}
-
-/** Pausentimer zwischen den Sätzen: vibriert und piept am Ende */
-function RestTimer() {
-  const [end, setEnd] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (end === null) return;
-    const id = setInterval(() => {
-      const t = Date.now();
-      setNow(t);
-      if (t >= end) { setEnd(null); sfx('success'); buzz([200, 100, 200]); }
-    }, 250);
-    return () => clearInterval(id);
-  }, [end]);
-  const left = end === null ? 0 : Math.max(0, Math.ceil((end - now) / 1000));
-  return (
-    <div className="flex items-center gap-2 pt-1 text-sm">
-      <span className="text-mute">Pause</span>
-      {end === null
-        ? [60, 90, 120, 180].map((s) => (
-          <button key={s} onClick={() => { setNow(Date.now()); setEnd(Date.now() + s * 1000); }} className="rounded-full bg-raised px-3 py-1.5 text-ink">{s < 120 ? `${s} s` : `${s / 60} min`}</button>
-        ))
-        : <>
-          <span className="num font-display text-2xl text-neon">{Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}</span>
-          <button onClick={() => setEnd(null)} className="ml-auto rounded-full bg-raised px-3 py-1.5">Stopp</button>
-        </>}
     </div>
   );
 }

@@ -209,6 +209,15 @@ export async function finishGym(input: GymInput, rng: () => number = Math.random
   });
 }
 
+/**
+ * Schlägt dieser Satz den Rekord? Gleiche Regel wie beim Speichern: mindestens 1 kg schwerer,
+ * oder gleiches Gewicht mit mehr Wiederholungen. Ohne bisherigen Rekord gibt es keinen.
+ */
+export function beatsRecord(rec: { kg: number; reps: number } | undefined, reps: number, kg: number): boolean {
+  if (!rec || !(reps > 0) || !(kg > 0)) return false;
+  return kg >= rec.kg + 1 || (kg === rec.kg && reps > rec.reps);
+}
+
 export function fmtKg(kg: number): string {
   return `${kg.toLocaleString('de-DE', { maximumFractionDigits: 2 })} kg`;
 }

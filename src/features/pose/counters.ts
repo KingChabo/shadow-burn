@@ -92,7 +92,7 @@ const ok = (...p: Keypoint[]) => p.every((q) => q.score >= MIN_SCORE);
  * Wdh. = oben → mindestens `down` tief → wieder oben (≤ `up`).
  * Wer nur bis `partial` runterkommt und wieder hochgeht, macht eine halbe Wdh.
  */
-function repMachine(down = 0.7, up = 0.2, partial = 0.35) {
+export function repMachine(down = 0.7, up = 0.2, partial = 0.35) {
   let phase: 'none' | 'up' | 'down' = 'none';
   let deepest = 0;
   return {
@@ -464,6 +464,363 @@ export function createPlankCounter(clock: () => number = () => performance.now()
   };
 }
 
+// ---------- Weitere Kamera-Übungen (23.11.2026) ----------
+
+/** Rumpf: Schulter und Hüfte einer Seite. upright = steht/sitzt aufrecht, flat = liegt waagerecht. */
+function torsoOf(k: Keypoint[]) {
+  const s = pickSide(k, ['shoulder', 'hip']);
+  if (!s) return null;
+  const dy = s.hip.y - s.shoulder.y, dx = Math.abs(s.hip.x - s.shoulder.x);
+  return { s, dy, dx, len: Math.hypot(dx, dy), upright: dy > 0 && dy > dx * 1.3, flat: Math.abs(dy) < dx * 0.7 };
+}
+function headY(k: Keypoint[]): number | null {
+  return vis(k[KP.nose]) ? k[KP.nose].y : meanY(k, [KP.lEye, KP.rEye, KP.lEar, KP.rEar]);
+}
+
+/**
+ * Klimmzug / Chin-up. Handy schräg vor sich auf den Boden, Kopf und Hände im Bild.
+ * Gemessen: wie weit der Kopf zu den Händen hochkommt (bezogen auf den Abstand beim Hängen).
+ * Wdh. = ganz hängen → Kopf auf Höhe der Hände (Kinn über der Stange) → wieder ganz hängen.
+ */
+export function createPullupCounter(): RepCounter {
+  const HINT = 'Kopf und Hände ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  const m = repMachine(0.95, 0.25, 0.5);
+  const hang = decayMax();
+  let depth: number | null = null;
+  let lost = 0;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const hy = headY(k), wy = meanY(k, [KP.lWrist, KP.rWrist]), sy = meanY(k, [KP.lShoulder, KP.rShoulder]);
+      if (hy === null || wy === null || sy === null) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      st.angle = null;
+      st.source = 'Kopf zu den Händen';
+      if (wy > sy) {
+        m.reset(); depth = null; st.phase = 'none'; st.depth = 0;
+        st.hint = 'An die Stange hängen, Arme hoch';
+        return { state: { ...st }, event: null };
+      }
+      const gap = hy - wy; // hängend groß, oben 0 oder negativ
+      const ref = hang.push(Math.max(0, gap));
+      if (ref < 15) { st.hint = 'Arme ganz strecken'; return { state: { ...st }, event: null }; }
+      depth = ema(depth, clamp01((ref - gap) / ref), 0.6);
+      st.depth = depth;
+      let event: RepEvent = null;
+      const r = m.step(depth);
+      if (r === 'rep') { st.reps++; event = { type: 'rep' }; }
+      else if (r === 'partial') { st.invalid++; event = { type: 'invalid', reason: 'Kinn über die Stange!' }; }
+      st.phase = m.phase;
+      st.hint = m.phase === 'none' ? 'Ganz hängen, Arme gestreckt' : m.phase === 'down' ? 'Runter, Arme ganz strecken' : depth > 0.5 ? 'Höher, Kinn über die Stange!' : 'Hochziehen!';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/**
+ * Dips (Barren oder Stuhlkante, seitlich). Ellbogenwinkel: oben > ~150°, unten < ~95°.
+ * Oberkörper muss aufrecht sein (sonst wäre es ein Liegestütz).
+ */
+export function createDipCounter(): RepCounter {
+  const HINT = 'Seitlich: Schulter, Ellbogen und Hand ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  const m = repMachine(0.7, 0.2, 0.4);
+  let depth: number | null = null;
+  let lost = 0;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const arm = pickSide(k, ['shoulder', 'elbow', 'wrist']);
+      if (!arm) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      const t = torsoOf(k);
+      if ((t && !(t.dy > 0 && t.dy > t.dx * 0.8)) || arm.wrist.y < arm.shoulder.y) {
+        m.reset(); depth = null; st.phase = 'none'; st.depth = 0;
+        st.hint = 'Aufrecht stützen, Hände neben der Hüfte';
+        return { state: { ...st }, event: null };
+      }
+      st.angle = ema(st.angle, angle(arm.shoulder, arm.elbow, arm.wrist));
+      st.source = 'Ellbogen';
+      depth = ema(depth, clamp01((160 - st.angle) / 65), 0.6);
+      st.depth = depth;
+      let event: RepEvent = null;
+      const r = m.step(depth);
+      if (r === 'rep') { st.reps++; event = { type: 'rep' }; }
+      else if (r === 'partial') { st.invalid++; event = { type: 'invalid', reason: 'Tiefer runter!' }; }
+      st.phase = m.phase;
+      st.hint = m.phase === 'none' ? 'Arme strecken, oben starten' : m.phase === 'down' ? 'Hochdrücken!' : 'Runter, bis der Oberarm waagerecht ist';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/** Kniewinkel aller Beine, bei denen Hüfte, Knie und Fuß erkannt sind */
+function kneeAngles(k: Keypoint[]): number[] {
+  const out: number[] = [];
+  for (const [h, kn, a] of [[KP.lHip, KP.lKnee, KP.lAnkle], [KP.rHip, KP.rKnee, KP.rAnkle]]) {
+    if (ok(k[h], k[kn], k[a])) out.push(angle(k[h], k[kn], k[a]));
+  }
+  return out;
+}
+
+/**
+ * Ausfallschritt (seitlich). Beim richtigen Ausfallschritt beugen sich beide Knie auf ~90°.
+ * Gemessen wird das stärker gebeugte Knie: oben > ~150°, unten < ~100°.
+ */
+export function createLungeCounter(): RepCounter {
+  const HINT = 'Seitlich: Hüfte, Knie und Füße ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  const m = repMachine(0.7, 0.2, 0.4);
+  let depth: number | null = null;
+  let lost = 0;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const ks = kneeAngles(k);
+      if (!ks.length) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      const t = torsoOf(k);
+      if (t && !(t.dy > 0 && t.dy > t.dx * 0.55)) {
+        m.reset(); depth = null; st.phase = 'none'; st.depth = 0;
+        st.hint = 'Aufrecht hinstellen';
+        return { state: { ...st }, event: null };
+      }
+      st.angle = ema(st.angle, Math.min(...ks));
+      st.source = 'Knie';
+      depth = ema(depth, clamp01((165 - st.angle) / 70), 0.6);
+      st.depth = depth;
+      let event: RepEvent = null;
+      const r = m.step(depth);
+      if (r === 'rep') { st.reps++; event = { type: 'rep' }; }
+      else if (r === 'partial') { st.invalid++; event = { type: 'invalid', reason: 'Tiefer runter!' }; }
+      st.phase = m.phase;
+      st.hint = m.phase === 'none' ? 'Gerade hinstellen' : m.phase === 'down' ? 'Zurück in den Stand' : 'Großer Schritt, hinteres Knie Richtung Boden';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/**
+ * High Knees (von vorn). Jedes Knie, das bis etwa auf Hüfthöhe kommt, zählt 1.
+ * Gemessen: Höhe des Knies unter der Hüfte im Vergleich zum Stehen (je Bein).
+ */
+export function createHighKneesCounter(): RepCounter {
+  const HINT = 'Von vorn: Hüfte und Knie ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  const legs = [KP.lHip, KP.rHip].map((hip, i) => ({ hip, knee: i ? KP.rKnee : KP.lKnee, m: repMachine(0.75, 0.3, 0.5), ref: decayMax(), d: null as number | null }));
+  let lost = 0;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const seen = legs.filter((l) => ok(k[l.hip], k[l.knee]));
+      if (!seen.length) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      st.angle = null;
+      st.source = seen.length === 2 ? 'beide Knie' : 'ein Knie';
+      let event: RepEvent = null;
+      let deepest = 0;
+      for (const l of seen) {
+        const thigh = Math.max(0, k[l.knee].y - k[l.hip].y);
+        const ref = l.ref.push(thigh);
+        if (ref < 10) continue;
+        l.d = ema(l.d, clamp01(1 - thigh / ref), 0.6);
+        deepest = Math.max(deepest, l.d);
+        const r = l.m.step(l.d);
+        if (r === 'rep') { st.reps++; event = { type: 'rep' }; }
+        else if (r === 'partial' && !event) { st.invalid++; event = { type: 'invalid', reason: 'Knie höher!' }; }
+      }
+      st.depth = deepest;
+      st.phase = legs.some((l) => l.m.phase === 'down') ? 'down' : legs.some((l) => l.m.phase === 'up') ? 'up' : 'none';
+      st.hint = st.phase === 'none' ? 'Gerade hinstellen' : 'Knie bis auf Hüfthöhe!';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/**
+ * Mountain Climbers (seitlich, Liegestütz-Position). Jedes Knie, das Richtung Brust kommt, zählt 1.
+ * Gemessen: Hüftwinkel Schulter-Hüfte-Knie je Bein (gestreckt ~170°, Knie vorn < ~105°).
+ * Liegen beide Knie fast an derselben Stelle (das verdeckte Bein wird oft auf das sichtbare gelegt),
+ * zählt ein gleichzeitiger zweiter Treffer nicht.
+ */
+export function createMountainCounter(clock: () => number = () => performance.now()): RepCounter {
+  const HINT = 'Seitlich: Schulter, Hüfte und Knie ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  const legs = [0, 1].map((i) => ({ knee: i ? KP.rKnee : KP.lKnee, hip: i ? KP.rHip : KP.lHip, sh: i ? KP.rShoulder : KP.lShoulder, m: repMachine(0.7, 0.25, 0.45), d: null as number | null }));
+  let lost = 0;
+  let lastRep = -1e9;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const now = clock();
+      const t = torsoOf(k);
+      if (!t) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      st.angle = null;
+      st.source = 'Hüfte';
+      if (!(Math.abs(t.dy) < t.dx * 0.8)) {
+        for (const l of legs) { l.m.reset(); l.d = null; }
+        st.phase = 'none'; st.depth = 0; st.hint = 'In den Liegestütz gehen';
+        return { state: { ...st }, event: null };
+      }
+      const kneesTogether = ok(k[KP.lKnee], k[KP.rKnee]) && Math.hypot(k[KP.lKnee].x - k[KP.rKnee].x, k[KP.lKnee].y - k[KP.rKnee].y) < t.len * 0.2;
+      let event: RepEvent = null;
+      let deepest = 0;
+      for (const l of legs) {
+        if (!ok(k[l.sh], k[l.hip], k[l.knee])) continue;
+        l.d = ema(l.d, clamp01((165 - angle(k[l.sh], k[l.hip], k[l.knee])) / 75), 0.6);
+        deepest = Math.max(deepest, l.d);
+        const r = l.m.step(l.d);
+        if (r === 'rep') {
+          if (kneesTogether && now - lastRep < 300) continue;
+          st.reps++; event = { type: 'rep' }; lastRep = now;
+        } else if (r === 'partial' && !event) { st.invalid++; event = { type: 'invalid', reason: 'Knie weiter zur Brust!' }; }
+      }
+      st.depth = deepest;
+      st.phase = legs.some((l) => l.m.phase === 'down') ? 'down' : legs.some((l) => l.m.phase === 'up') ? 'up' : 'none';
+      st.hint = st.phase === 'none' ? 'Beine strecken, Liegestütz-Position' : 'Knie abwechselnd zur Brust!';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/**
+ * Burpee (seitlich, ganzer Körper). Ablauf: Stehen → Liegestütz (Rumpf waagerecht) → Stehen → Sprung mit Armen über dem Kopf.
+ * Erst wenn alles in dieser Reihenfolge kommt, zählt 1. Wer sich wieder hinlegt oder nach dem Aufstehen
+ * 2,5 s lang nicht mit den Armen nach oben springt, bekommt "ungültig".
+ */
+export function createBurpeeCounter(clock: () => number = () => performance.now()): RepCounter {
+  const HINT = 'Seitlich, ganzer Körper ins Bild (ca. 3 m weg)';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  let stage: 'none' | 'stand' | 'floor' | 'back' = 'none';
+  let backSince = 0;
+  let lost = 0;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const now = clock();
+      const t = torsoOf(k);
+      if (!t) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      st.angle = null;
+      const hy = headY(k) ?? t.s.shoulder.y;
+      const handsUp = [k[KP.lWrist], k[KP.rWrist]].some((w) => vis(w) && w.y < hy);
+      let event: RepEvent = null;
+      if (stage === 'none') { if (t.upright) stage = 'stand'; }
+      else if (stage === 'stand') { if (t.flat) stage = 'floor'; }
+      else if (stage === 'floor') { if (t.upright) { stage = 'back'; backSince = now; } }
+      else if (stage === 'back') {
+        if (handsUp) { st.reps++; event = { type: 'rep' }; stage = 'stand'; }
+        else if (t.flat) { st.invalid++; event = { type: 'invalid', reason: 'Hochspringen, Arme hoch!' }; stage = 'floor'; }
+        else if (now - backSince > 2500) { st.invalid++; event = { type: 'invalid', reason: 'Hochspringen, Arme hoch!' }; stage = 'stand'; }
+      }
+      st.source = stage === 'floor' ? 'liegt' : t.upright ? 'steht' : 'Übergang';
+      st.depth = stage === 'floor' ? 1 : stage === 'back' ? 0.5 : 0;
+      st.phase = stage === 'none' ? 'none' : stage === 'floor' ? 'down' : 'up';
+      st.hint = stage === 'none' ? 'Gerade hinstellen' : stage === 'stand' ? 'Runter in den Liegestütz' : stage === 'floor' ? 'Füße ran und aufstehen' : 'Hochspringen, Arme über den Kopf!';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/**
+ * Glute Bridge (seitlich, auf dem Rücken). Hüftwinkel Schulter-Hüfte-Knie:
+ * unten ~135°, oben gerade Linie > ~160°. Nur halb hoch (bis ~148°) = "Hüfte höher!".
+ */
+export function createGluteBridgeCounter(): RepCounter {
+  const HINT = 'Seitlich liegend: Schulter, Hüfte und Knie ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  const m = repMachine(0.85, 0.3, 0.5);
+  let depth: number | null = null;
+  let lost = 0;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const s = pickSide(k, ['shoulder', 'hip', 'knee']);
+      if (!s) return lostState(st, ++lost, HINT);
+      lost = 0;
+      st.visible = true;
+      const t = torsoOf(k);
+      if (t?.upright) {
+        m.reset(); depth = null; st.phase = 'none'; st.depth = 0;
+        st.hint = 'Auf den Rücken legen, Füße aufstellen';
+        return { state: { ...st }, event: null };
+      }
+      st.angle = ema(st.angle, angle(s.shoulder, s.hip, s.knee));
+      st.source = 'Hüfte';
+      depth = ema(depth, clamp01((st.angle - 130) / 35), 0.6);
+      st.depth = depth;
+      let event: RepEvent = null;
+      const r = m.step(depth);
+      if (r === 'rep') { st.reps++; event = { type: 'rep' }; }
+      else if (r === 'partial') { st.invalid++; event = { type: 'invalid', reason: 'Hüfte höher!' }; }
+      st.phase = m.phase;
+      st.hint = m.phase === 'none' ? 'Hüfte ablegen' : m.phase === 'down' ? 'Langsam ablegen' : 'Hüfte hoch, Po anspannen!';
+      return { state: { ...st }, event };
+    },
+  };
+}
+
+/**
+ * Wandsitzen (seitlich). Zählt Sekunden, solange das Knie etwa rechtwinklig ist (70–115°),
+ * ohne Füße im Bild: solange der Oberschenkel waagerecht ist. "reps" = gehaltene Sekunden.
+ */
+export function createWallSitCounter(clock: () => number = () => performance.now()): RepCounter {
+  const HINT = 'Seitlich: Hüfte und Knie ins Bild';
+  const st: CounterState = { reps: 0, invalid: 0, phase: 'none', angle: null, visible: false, hint: HINT, depth: 0 };
+  let lost = 0, held = 0, last: number | null = null, badSince: number | null = null, started = false;
+  return {
+    state: () => ({ ...st }),
+    update(k) {
+      const now = clock();
+      const dt = last === null ? 0 : Math.min(0.5, (now - last) / 1000);
+      last = now;
+      const s = pickSide(k, ['hip', 'knee']);
+      if (!s) { const r = lostState(st, ++lost, HINT); if (lost > 5) st.phase = 'none'; return { ...r, state: { ...st } }; }
+      lost = 0;
+      st.visible = true;
+      let good: boolean, standing: boolean;
+      if (vis(s.ankle)) {
+        st.angle = ema(st.angle, angle(s.hip, s.knee, s.ankle), 0.3);
+        good = st.angle >= 70 && st.angle <= 115;
+        standing = st.angle > 150;
+        st.depth = clamp01((170 - st.angle) / 80);
+        st.source = 'Knie';
+      } else {
+        st.angle = null;
+        const dy = Math.abs(s.knee.y - s.hip.y), dx = Math.abs(s.knee.x - s.hip.x);
+        good = dy < dx * 0.4;
+        standing = dy > dx * 1.5;
+        st.depth = clamp01(1 - dy / Math.max(1, dx + dy));
+        st.source = 'Oberschenkel';
+      }
+      let event: RepEvent = null;
+      if (good) {
+        started = true; held += dt; badSince = null; st.phase = 'up';
+        const sec = Math.floor(held + 1e-6);
+        if (sec > st.reps) { st.reps = sec; if (sec % 15 === 0) event = { type: 'rep' }; }
+        st.hint = 'Halten!';
+      } else if (!started || standing) {
+        st.phase = 'none'; badSince = null;
+        st.hint = 'Rücken an die Wand, runter bis die Oberschenkel waagerecht sind';
+      } else {
+        if (badSince === null) badSince = now;
+        st.phase = 'down';
+        st.hint = 'Tiefer, Oberschenkel waagerecht!';
+        if (now - badSince > 1000 && badSince !== -1) { st.invalid++; event = { type: 'invalid', reason: 'Oberschenkel waagerecht!' }; badSince = -1; }
+      }
+      return { state: { ...st }, event };
+    },
+  };
+}
+
 /** Welche Übungen die Kamera zählen kann */
 export const CAMERA_COUNTERS: Record<string, (clock?: () => number) => RepCounter> = {
   pushup: createPushupCounter,
@@ -471,4 +828,18 @@ export const CAMERA_COUNTERS: Record<string, (clock?: () => number) => RepCounte
   squat: createSquatCounter,
   jacks: createJacksCounter,
   plank: createPlankCounter,
+  pullup: createPullupCounter,
+  chinup: createPullupCounter,
+  dip: createDipCounter,
+  lunge: createLungeCounter,
+  highknees: createHighKneesCounter,
+  mountain: createMountainCounter,
+  burpee: createBurpeeCounter,
+  glutebridge: createGluteBridgeCounter,
+  wallsit: createWallSitCounter,
+};
+
+/** Was bei der Kamera unten links als Winkel angezeigt wird */
+export const ANGLE_LABEL: Record<string, string> = {
+  pushup: 'Ellbogen', dip: 'Ellbogen', squat: 'Knie', lunge: 'Knie', wallsit: 'Knie', plank: 'Körperlinie', situp: 'Hüfte', glutebridge: 'Hüfte',
 };

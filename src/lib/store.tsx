@@ -12,7 +12,8 @@ import { buyItem as buyItemLogic, equipItem, normalizeAvatar, type AvatarState, 
 import { buyCos, equipCos, normalizeCos, type CosKind, type CosState } from './cosmetics';
 import { activeTheme, chooseTheme, hexToRgbTriplet, unlockedThemes, type Theme, type ThemeChoice } from './themes';
 import { levelFromXp } from './level';
-import type { QuestSwap } from './quests';
+import type { DayQuests, QuestSwap } from './quests';
+import { ensureDayQuests } from './dayQuests';
 import { syncBadges } from './badges';
 
 export interface GameState {
@@ -29,6 +30,8 @@ export interface GameState {
   claimed: string[];
   /** Heute getauschter Auftrag */
   questSwap: QuestSwap | null;
+  /** Für heute festgelegte Aufträge (nach Erholung gewählt) */
+  dayQuests: DayQuests | null;
   lockNotice: LockNotice | null;
   avatar: AvatarState;
   /** Namens-Tag, Hintergrund, Titel */
@@ -67,7 +70,7 @@ const GameCtx = createContext<Ctx | null>(null);
 export function GameProvider({ children }: { children: ReactNode }) {
   const [st, setSt] = useState<GameState>({
     ready: false, profile: null, wallet: defaultWallet(), streak: emptyStreak(), settings: defaultSettings(),
-    prefs: defaultPrefs(), records: {}, todays: [], gymPointsToday: 0, claimed: [], questSwap: null, lockNotice: null,
+    prefs: defaultPrefs(), records: {}, todays: [], gymPointsToday: 0, claimed: [], questSwap: null, dayQuests: null, lockNotice: null,
     avatar: normalizeAvatar(null), cos: normalizeCos(null), level: 1, theme: activeTheme(1, null), themeUnlocked: null, badgeNotice: [],
   });
 
@@ -76,6 +79,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     await syncBadges().catch(() => {});
     const badgeNotice = await getKV<string[]>('badgeNotice', []);
     const today = dayKey();
+    const dayQuests = await ensureDayQuests(today).catch(() => null);
     const [profile, wallet, streakRaw, settings, prefs, records, todays, claimed, lockNotice, gymToday, questSwap, avatarRaw, themeChoice, themeSeen, cosRaw] = await Promise.all([
       getKV<Profile | null>('profile', null),
       getKV<Wallet>('wallet', defaultWallet()),
@@ -105,7 +109,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setFxSettings(settings);
     // Anzeige: Streak so, wie sie heute gilt
     const streak = checkStreak(streakRaw, today).state;
-    setSt({ ready: true, profile, wallet, streak, settings, prefs, records, todays, gymPointsToday, claimed, questSwap, lockNotice,
+    setSt({ ready: true, profile, wallet, streak, settings, prefs, records, todays, gymPointsToday, claimed, questSwap, dayQuests, lockNotice,
       avatar: normalizeAvatar(avatarRaw), cos: normalizeCos(cosRaw), level, theme, themeUnlocked, badgeNotice });
   }, []);
 

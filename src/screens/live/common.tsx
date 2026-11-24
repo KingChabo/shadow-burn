@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { Btn } from '../../components/ui';
 import { Icon } from '../../components/Icon';
@@ -34,24 +34,38 @@ export function useWakeLock() {
   }, []);
 }
 
-export function TopBar({ seconds, onEnd, title }: { seconds: number; onEnd: () => void; title: string }) {
+/**
+ * Obere Leiste: Übung links, darunter klein die Gesamtzeit (oder ein anderer kurzer Text), rechts „Fertig“.
+ * `overVideo`: über dem Kamerabild immer dunkel, sonst in der Farbe des Designs (hell oder dunkel).
+ */
+export function TopBar({ seconds, sub, onEnd, title, overVideo = false }: {
+  seconds?: number; sub?: ReactNode; onEnd: () => void; title: string; overVideo?: boolean;
+}) {
   return (
-    <div className="absolute top-0 inset-x-0 z-30 flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-2 bg-gradient-to-b from-black/80 to-transparent">
-      <span className="font-display text-lg text-ink/80">{title}</span>
-      <span className="font-display text-3xl tabular-nums">{fmtTime(seconds)}</span>
-      <button onClick={onEnd} className="rounded-xl bg-white/10 border border-white/20 px-4 py-2 font-display">Fertig</button>
+    <div className={`absolute top-0 inset-x-0 z-30 flex items-center justify-between px-4 pt-[max(env(safe-area-inset-top),12px)] pb-3 bg-gradient-to-b ${overVideo ? 'from-black/80 text-white' : 'from-bg via-bg/90'} to-transparent`}>
+      <div className="min-w-0 leading-tight">
+        <div className={`font-display text-lg truncate ${overVideo ? 'text-white/85' : 'text-ink/80'}`}>{title}</div>
+        {sub !== undefined ? <div className="text-xs">{sub}</div>
+          : seconds !== undefined && <div className={`num text-xs tabular-nums ${overVideo ? 'text-white/60' : 'text-mute'}`}>{fmtTime(seconds)}</div>}
+      </div>
+      <button onClick={onEnd} className={`shrink-0 rounded-xl border px-4 py-2 font-display ${overVideo ? 'bg-white/10 border-white/20' : 'bg-panel border-line'}`}>Fertig</button>
     </div>
   );
+}
+
+/** Schriftfarbe des aktuellen Designs (für Animationen, die keine CSS-Variablen können) */
+export function inkColor() {
+  return typeof document !== 'undefined' && document.documentElement.classList.contains('light') ? '#141210' : '#ffffff';
 }
 
 export function BigCount({ n, label, pulseKey }: { n: number; label: string; pulseKey?: number }) {
   return (
     <div className="text-center">
-      <motion.div key={pulseKey} initial={{ scale: 1.35, color: '#FF6B35' }} animate={{ scale: 1, color: '#ffffff' }} transition={{ type: 'spring', stiffness: 400, damping: 15 }}
-        className="font-display text-[9rem] leading-none tabular-nums">
+      <motion.div key={pulseKey} initial={{ scale: 1.35, color: '#FF6B35' }} animate={{ scale: 1, color: inkColor() }} transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+        className="font-display text-[9rem] leading-none tabular-nums text-ink">
         {n}
       </motion.div>
-      <div className="tracking-[0.3em] text-mute text-sm">{label}</div>
+      <div className="text-mute text-sm">{label}</div>
     </div>
   );
 }

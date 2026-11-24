@@ -1,7 +1,7 @@
 // Linien-Icons als SVG (keine Emojis).
 export type IconName =
   | 'camera' | 'tilt' | 'tap' | 'hand' | 'timer' | 'route' | 'snow' | 'trophy' | 'phone'
-  | 'check' | 'x' | 'star' | 'bolt' | 'search' | 'gift' | 'broken' | 'flame' | 'install' | 'qr' | 'scan' | 'trash' | 'down' | 'bluetooth' | 'settings' | 'lock';
+  | 'check' | 'x' | 'star' | 'bolt' | 'search' | 'gift' | 'broken' | 'flame' | 'install' | 'qr' | 'scan' | 'trash' | 'down' | 'bluetooth' | 'settings' | 'lock' | 'jump' | 'pin';
 
 const P: Record<IconName, JSX.Element> = {
   camera: <><path d="M3 8h4l2-3h6l2 3h4v11H3z" /><circle cx="12" cy="13" r="3.6" /></>,
@@ -28,6 +28,8 @@ const P: Record<IconName, JSX.Element> = {
   bluetooth: <path d="M7 7l10 10-5 4V3l5 4L7 17" />,
   settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /><circle cx="12" cy="12" r="6.5" /></>,
   lock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+  jump: <><path d="M4 21h16" /><path d="M12 17V4M7.5 8.5L12 4l4.5 4.5" /></>,
+  pin: <><path d="M12 21s-6-6.2-6-11a6 6 0 0 1 12 0c0 4.8-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></>,
   trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /><path d="M10 11v6M14 11v6" /></>,
 };
 

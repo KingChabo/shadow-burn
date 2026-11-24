@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { db, getKV, setKV, type Workout } from './db';
 import { updateGuard } from './update';
 import {
-  defaultPrefs, defaultSettings, defaultWallet, startupCheck,
+  defaultPrefs, defaultSettings, defaultWallet, moveTrainingDay, saveWeekPlan, startupCheck,
   type LockNotice, type Prefs, type Profile, type Records, type Settings, type Wallet,
 } from './game';
 import { emptyStreak, buyLock as buyLockLogic, checkStreak, type StreakState } from './streak';
@@ -52,6 +52,10 @@ interface Ctx extends GameState {
   setPrefs(p: Prefs): Promise<void>;
   buyLock(): Promise<boolean>;
   dismissLockNotice(): Promise<void>;
+  /** Wochenplan speichern (on = false: jeden Tag); Fehlermeldung oder null */
+  saveWeekPlan(on: boolean, days: (string | null)[]): Promise<string | null>;
+  /** Trainingstag dieser Woche verschieben (Tage als YYYY-MM-DD); Fehlermeldung oder null */
+  moveTrainingDay(from: string, to: string): Promise<string | null>;
   /** Kleidung kaufen; gibt eine Fehlermeldung oder null zurück */
   buyItem(id: string): Promise<string | null>;
   /** Tag/Hintergrund/Titel kaufen; Fehlermeldung oder null */
@@ -145,6 +149,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
     },
     async dismissBadgeNotice() { await setKV('badgeNotice', []); await reload(); },
     async dismissLockNotice() { await setKV('lockNotice', null); await reload(); },
+    async saveWeekPlan(on, days) { const e = await saveWeekPlan(on, days); await reload(); return e; },
+    async moveTrainingDay(from, to) { const e = await moveTrainingDay(from, to); await reload(); return e; },
     async buyItem(id) {
       let err: string | null = null;
       await db.transaction('rw', db.kv, async () => {

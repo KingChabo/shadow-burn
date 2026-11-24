@@ -3,7 +3,8 @@ import { ACT, type ActivityId, type Mode } from '../data/activities';
 import { db, getKV, setKV, type Workout } from './db';
 import { dayKey } from './date';
 import { computeGems, computePoints, plausibleKm, plausibleReps, type GemAward, type ScoreBreakdown } from './scoring';
-import { checkStreak, emptyStreak, registerActiveDay, STREAK_MIN_POINTS, type StreakState } from './streak';
+import { applyPlan, checkStreak, emptyStreak, registerActiveDay, STREAK_MIN_POINTS, type StreakState } from './streak';
+import { canMove, cleanDays, movePlanDay, validDays, type WeekPlan } from './weekPlan';
 import { questProgress, questsFor, type QuestSwap } from './quests';
 import { levelFromXp } from './level';
 import { mergeFriend, recordValue, STAT_BODY, STAT_CATS, weekKey, type Friend, type PlayerCard, type SharedStats } from './leaderboard';
@@ -94,6 +95,14 @@ export async function startupCheck(now = new Date()): Promise<LockNotice | null>
   const today = dayKey(now);
   const s = await getKV<StreakState>('streak', emptyStreak());
   const r = checkStreak(s, today);
+  // Wochenplan: Ruhetage zählen mit (ohne Hinweis), Meilensteine gibt es dabei auch
+  if (r.restDays && !r.broken) {
+    await setKV('streak', r.state);
+    if (r.milestoneGems) {
+      const wallet = await getKV<Wallet>('wallet', defaultWallet());
+      await setKV('wallet', { ...wallet, gems: wallet.gems + r.milestoneGems });
+    }
+  }
   if (r.usedLocks || r.usedRest || r.broken) {
     await setKV('streak', r.state);
     const notice: LockNotice = { usedLocks: r.usedLocks, usedRest: r.usedRest, broken: r.broken, lostStreak: r.lostStreak, day: today };
@@ -101,6 +110,39 @@ export async function startupCheck(now = new Date()): Promise<LockNotice | null>
     return notice;
   }
   return null;
+}
+
+/**
+ * Wochenplan speichern (on = false: "jeden Tag"). Ändert man die Tage, gelten sie sofort
+ * und ersetzen Verschiebungen dieser Woche. Die laufende Streak bleibt erhalten.
+ */
+export async function saveWeekPlan(on: boolean, days: (string | null)[], now = new Date()): Promise<string | null> {
+  const today = dayKey(now);
+  const clean = cleanDays(days);
+  if (on && !validDays(clean)) return 'Mindestens 2 Trainingstage pro Woche.';
+  await db.transaction('rw', db.kv, async () => {
+    const s = await getKV<StreakState>('streak', emptyStreak());
+    const old = s.plan;
+    const same = !!old && old.days.every((d, i) => d === clean[i]);
+    const plan: WeekPlan = { on, days: clean, week: same ? old?.week ?? null : null };
+    await setKV('streak', applyPlan(s, plan, today));
+  });
+  return null;
+}
+
+/** Einen Trainingstag dieser Woche verschieben (z. B. Mi → Do). Gibt bei Fehler den Grund zurück. */
+export async function moveTrainingDay(from: string, to: string, now = new Date()): Promise<string | null> {
+  const today = dayKey(now);
+  let err: string | null = null;
+  await db.transaction('rw', db.kv, async () => {
+    const s = checkStreak(await getKV<StreakState>('streak', emptyStreak()), today).state;
+    if (!s.plan) { err = 'Kein Wochenplan aktiv.'; return; }
+    const doneToday = s.lastActiveDay === today && s.restCounted !== today;
+    const c = canMove(s.plan, from, to, today, doneToday);
+    if (!c.ok) { err = c.reason ?? 'Geht nicht.'; return; }
+    await setKV('streak', applyPlan(s, movePlanDay(s.plan, from, to), today));
+  });
+  return err;
 }
 
 function recordCheck(activityId: ActivityId, rec: Records, w: WorkoutInput, pace: number | undefined) {

@@ -13,6 +13,8 @@ import { Avatar } from '../components/Avatar';
 import { ShopOverlay } from './Shop';
 import { MuscleCard } from '../components/MuscleCard';
 import { RecapBanner } from './Recap';
+import { WeekPlanCard } from '../components/WeekPlanCard';
+import { entryFor, planActive } from '../lib/weekPlan';
 
 export function Home({ onStart }: { onStart: (id: ActivityId) => void }) {
   const g = useGame();
@@ -27,7 +29,9 @@ export function Home({ onStart }: { onStart: (id: ActivityId) => void }) {
   let motivation: string;
   const missing = Math.max(0, STREAK_MIN_POINTS - pointsToday);
   const fmt = (n: number) => n.toLocaleString('de-DE');
-  if (doneToday) motivation = `Heute gesichert`;
+  const planOn = planActive(g.streak.plan);
+  const restToday = planOn && entryFor(g.streak.plan!, today) === null;
+  if (doneToday) motivation = restToday && g.streak.restCounted === today ? 'Ruhetag' : `Heute gesichert`;
   else if (g.streak.current > 0) motivation = `Noch ${fmt(missing)} P · ${h} Std.`;
   else motivation = `${fmt(missing)} P bis zum Start`;
   const [help, setHelp] = useState(false);
@@ -74,6 +78,8 @@ export function Home({ onStart }: { onStart: (id: ActivityId) => void }) {
           <button className="mt-2 text-sm font-medium text-neon" onClick={g.dismissLockNotice}>Verstanden</button>
         </motion.div>
       )}
+
+      <WeekPlanCard />
 
       {/* Auftrag des Tages: Verlaufs-Banner mit Streifen */}
       <motion.button data-tour="quest" whileTap={{ scale: 0.985 }} onClick={() => onStart(featured.id)} className="bg-hot relative block w-full overflow-hidden rounded-3xl px-5 py-[18px] text-left">
@@ -183,7 +189,9 @@ export function Home({ onStart }: { onStart: (id: ActivityId) => void }) {
           <dl className="mt-3 space-y-2 text-sm">
             <div><dt className="inline font-semibold"><Icon name="bolt" className="mr-1 inline h-4 w-4 text-neon" />Punkte: </dt><dd className="inline text-mute">für jedes Training, zählen für Level und Rangliste.</dd></div>
             <div><dt className="inline font-semibold"><GemIcon className="mr-1 inline h-4 w-4" />Gems: </dt><dd className="inline text-mute">für Aufträge und Rekorde, ausgeben im Shop.</dd></div>
-            <div><dt className="inline font-semibold">Streak: </dt><dd className="inline text-mute">Tage am Stück mit {STREAK_MIN_POINTS}+ Punkten. 1 Ruhetag pro Woche ist frei.</dd></div>
+            <div><dt className="inline font-semibold">Streak: </dt><dd className="inline text-mute">{planOn
+              ? `Wochenplan: Ruhetage zählen mit, an Trainingstagen ${STREAK_MIN_POINTS}+ Punkte. Verpasster Trainingstag = Streak weg.`
+              : `Tage am Stück mit ${STREAK_MIN_POINTS}+ Punkten. 1 Ruhetag pro Woche ist frei.`}</dd></div>
             <div><dt className="inline font-semibold">Schutz: </dt><dd className="inline text-mute">rettet die Streak automatisch (max. {MAX_LOCKS}).</dd></div>
             <div><dt className="inline font-semibold">Tageslimit: </dt><dd className="inline text-mute">über 1.500 P zählt nur die Hälfte.</dd></div>
             <div><dt className="inline font-semibold">Designs: </dt><dd className="inline text-mute">lange aufs Level-Abzeichen drücken.</dd></div>

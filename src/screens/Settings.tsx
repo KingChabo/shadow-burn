@@ -14,6 +14,7 @@ import { startTour } from '../lib/tour';
 import { APP_VERSION, listSnapshots, takeSnapshot, type Snapshot } from '../lib/update';
 import { ApkUpdate, apkUpdateAvailable, pickMessage } from '../lib/apkUpdate';
 import { STREAK_MIN_POINTS } from '../lib/streak';
+import { defaultPlanDays, FOCUS_IDEAS, MAX_FOCUS, MIN_TRAINING_DAYS, planActive, trainingCount, WEEKDAYS, type PlanDays } from '../lib/weekPlan';
 import { bleAvailable, ensureBlePermission } from '../lib/bluetooth';
 import { bluetoothOn, bluetoothSecure } from '../lib/bleProtocol';
 import { countShare } from '../lib/blogDb';
@@ -92,8 +93,11 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
 
   // Erste Seite: Name + vier Bereiche. Jeder Bereich ist eine eigene Seite (Zurück führt hierher).
   const pages: Record<Page, { title: string; hint: string; body: ReactNode }> = {
-    training: { title: 'Training', hint: 'Tagesziel, Fitness-Einstufung, Erlaubnisse', body: (
+    training: { title: 'Training', hint: 'Wochenplan, Tagesziel, Fitness-Einstufung, Erlaubnisse', body: (
       <>
+        <Section title="Wochenplan">
+          <WeekPlanEditor />
+        </Section>
         <Section>
           <div>
             <div className="flex items-baseline justify-between gap-3">
@@ -353,6 +357,60 @@ function Permissions() {
       {row('motion', 'Bewegungssensor', 'Sprünge, Sit-ups')}
       {row('location', 'Standort (GPS)', 'Strecke live messen')}
       {allow.location && <p className="text-xs text-mute">Den Standort ganz sperren geht in den Handy-Einstellungen unter Apps.</p>}
+    </div>
+  );
+}
+
+/** Jeden Tag trainieren oder feste Trainingstage (mind. 2) mit optionalem Inhalt */
+function WeekPlanEditor() {
+  const g = useGame();
+  const saved = g.streak.plan;
+  const on = planActive(saved);
+  const [days, setDays] = useState<PlanDays>(saved?.days?.length === 7 ? saved.days : defaultPlanDays());
+  const [msg, setMsg] = useState('');
+  const dirty = !saved || saved.days.some((d, i) => d !== days[i]);
+  const count = trainingCount(days);
+
+  const save = async (nextOn: boolean, d: PlanDays = days) => {
+    const err = await g.saveWeekPlan(nextOn, d);
+    setMsg(err ?? (nextOn ? 'Plan gespeichert. Deine Streak läuft weiter.' : 'Jeden Tag trainieren. Deine Streak läuft weiter.'));
+  };
+  const toggleDay = (i: number) => { setMsg(''); setDays((d) => d.map((x, j) => (j === i ? (x === null ? '' : null) : x))); };
+  const setFocus = (i: number, v: string) => setDays((d) => d.map((x, j) => (j === i ? v.slice(0, MAX_FOCUS) : x)));
+
+  return (
+    <div className="space-y-3">
+      <Segmented value={on ? 'plan' : 'daily'} onChange={(v) => void save(v === 'plan')}
+        options={[{ id: 'daily', label: 'Jeden Tag' }, { id: 'plan', label: 'Wochenplan' }]} />
+      <p className="text-xs text-mute">
+        {on
+          ? `Ruhetage zählen für die Streak mit. An einem Trainingstag brauchst du ${STREAK_MIN_POINTS}+ Punkte, sonst ist die Streak weg (außer ein Streak-Schutz rettet sie). Training an Ruhetagen ist erlaubt. Auf der Startseite kannst du Trainingstage dieser Woche verschieben.`
+          : `Jeden Tag ${STREAK_MIN_POINTS}+ Punkte, 1 Ruhetag pro Woche ist frei. Mit Wochenplan legst du feste Trainingstage fest (mindestens ${MIN_TRAINING_DAYS}).`}
+      </p>
+      {on && (
+        <>
+          <div className="grid grid-cols-7 gap-1">
+            {WEEKDAYS.map((w, i) => (
+              <button key={w} onClick={() => toggleDay(i)} aria-pressed={days[i] !== null}
+                className={`rounded-xl py-2 text-sm font-bold ${days[i] !== null ? 'bg-hot' : 'bg-raised text-mute'}`}>{w}</button>
+            ))}
+          </div>
+          <div className="space-y-1.5">
+            {days.map((d, i) => d === null ? null : (
+              <label key={i} className="flex items-center gap-2 text-sm">
+                <span className="w-7 font-semibold">{WEEKDAYS[i]}</span>
+                <input value={d} onChange={(e) => setFocus(i, e.target.value)} list="sb-focus-ideas" maxLength={MAX_FOCUS}
+                  placeholder="Was? z. B. Beine (optional)" aria-label={`Training am ${WEEKDAYS[i]}`}
+                  className="min-w-0 flex-1 rounded-xl bg-raised px-3 py-1.5 text-ink outline-none focus:ring-2 focus:ring-hot" />
+              </label>
+            ))}
+            <datalist id="sb-focus-ideas">{FOCUS_IDEAS.map((f) => <option key={f} value={f} />)}</datalist>
+          </div>
+          {count < MIN_TRAINING_DAYS && <p className="text-xs text-bad">Mindestens {MIN_TRAINING_DAYS} Trainingstage auswählen.</p>}
+          {dirty && <Btn className="w-full !py-3" disabled={count < MIN_TRAINING_DAYS} onClick={() => void save(true)}>Plan speichern</Btn>}
+        </>
+      )}
+      {msg && <p className="text-xs text-mute">{msg}</p>}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { badgeStates, TIER_GEMS, type Claimed } from './badges';
 import type { Wallet } from './game';
 import { questsFor, type DayQuests, type QuestSwap } from './quests';
 import { trackOf, type QuestLevels } from './fitness';
+import { isTrainingDay, planActive } from './weekPlan';
 
 /**
  * Was nach dem Löschen eines Trainings (normal oder Gerät) zusätzlich zurückgedreht wird:
@@ -18,11 +19,15 @@ import { trackOf, type QuestLevels } from './fitness';
  * - letzter aktiver Tag (meist heute): Streak −1, der Tag ist wieder offen
  * - ein früherer Tag der laufenden Streak: gilt wie ein verpasster Tag
  *   (freier Ruhetag, sonst ein Streak-Lock, sonst reißt die Streak ab diesem Tag)
+ * Mit Wochenplan: ein geplanter Ruhetag zählt auch ohne Training, dort ändert sich nichts;
+ * einen freien Ruhetag gibt es dann nicht (die Ruhetage stehen ja im Plan).
  */
 export function streakWithout(s: StreakState, day: string): StreakState {
   if (!s.lastActiveDay || s.current <= 0 || day > s.lastActiveDay) return s;
   const after = daysBetween(day, s.lastActiveDay); // Tage nach `day` bis zum letzten aktiven Tag
   if (after >= s.current) return s; // gehört nicht (mehr) zur laufenden Streak
+  const plan = planActive(s.plan);
+  if (plan && !isTrainingDay(s.plan, day)) return s;
   const wasLongest = s.longest === s.current;
   if (after === 0) {
     const current = s.current - 1;
@@ -33,7 +38,7 @@ export function streakWithout(s: StreakState, day: string): StreakState {
       lastActiveDay: current > 0 ? addDays(day, -1) : null,
     };
   }
-  const restFree = !s.restDay || Math.abs(daysBetween(s.restDay, day)) >= REST_DAY_EVERY;
+  const restFree = !plan && (!s.restDay || Math.abs(daysBetween(s.restDay, day)) >= REST_DAY_EVERY);
   if (restFree) {
     const current = s.current - 1;
     return { ...s, current, longest: wasLongest ? current : s.longest, restDay: day };

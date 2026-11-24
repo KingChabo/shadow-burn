@@ -10,19 +10,19 @@ import { TopBar, useEnd, useStopwatch, useWakeLock, type FinishFn } from './comm
 import { CountRing, RestScreen, SetBar, useExerciseInfo, useSets } from './sets';
 import type { LiveSets } from '../../lib/sets';
 
-type Props = { activity: Activity; mode: 'pocket' | 'jump'; onFinish: FinishFn; onManual?: () => void; sets?: LiveSets };
+type Props = { activity: Activity; onFinish: FinishFn; onManual?: () => void; sets?: LiveSets };
 type Flash = { text: string; id: number } | null;
 
-/** Nach so vielen ms ohne Berührung sperrt sich der Bildschirm wieder (gegen Tippen in der Hosentasche) */
+/** Nach so vielen ms ohne Berührung sperrt sich der Bildschirm wieder (gegen versehentliches Tippen beim Springen) */
 const RELOCK_MS = 8000;
 const HOLD_MS = 900;
 
 /**
- * Hosentasche (Oberschenkel-Neigung) und Sprung-Zähler. Das Handy steckt in der Tasche, darum ist der
- * Bildschirm gesperrt: Erst langes Drücken gibt die Knöpfe frei, sonst würde der Stoff "Fertig" tippen.
+ * Sprung-Zähler über den Bewegungssensor. Das Handy wird am Körper getragen, darum ist der
+ * Bildschirm gesperrt: Erst langes Drücken gibt die Knöpfe frei, sonst würde aus Versehen "Fertig" getippt.
  */
-export function MotionLive({ activity: a, mode, onFinish, onManual, sets: cfg }: Props) {
-  const counter = useRef<MotionCounter | null>(motionCounterFor(a.id, mode));
+export function MotionLive({ activity: a, onFinish, onManual, sets: cfg }: Props) {
+  const counter = useRef<MotionCounter | null>(motionCounterFor(a.id));
   const timed = a.unit === 'time';
   const [ms, setMs] = useState<MotionState | null>(counter.current?.state() ?? null);
   const [noData, setNoData] = useState(false);
@@ -55,8 +55,7 @@ export function MotionLive({ activity: a, mode, onFinish, onManual, sets: cfg }:
       else if (event?.type === 'rep' && !restingRef.current) {
         const n = state.reps - baseRef.current;
         if (timed) { sfx('rep'); buzz(50); say(`${n} Sekunden`); }
-        else if (mode === 'jump') { sfx('tap'); if (n % 10 === 0) say(String(n)); }
-        else { sfx('rep'); buzz(50); say(String(n)); }
+        else { sfx('tap'); if (n % 10 === 0) say(String(n)); }
       } else if (event?.type === 'invalid' && !restingRef.current) {
         sfx('invalid'); buzz([80, 60, 80]); say(event.reason.replace('!', ''));
         setFlash({ text: event.reason, id: Date.now() });
@@ -68,7 +67,7 @@ export function MotionLive({ activity: a, mode, onFinish, onManual, sets: cfg }:
     window.addEventListener('devicemotion', on);
     const t = setTimeout(() => { if (!got) setNoData(true); }, 2500);
     return () => { window.removeEventListener('devicemotion', on); clearTimeout(t); };
-  }, [a.id, mode, timed]);
+  }, [a.id, timed]);
 
   // Automatisch wieder sperren
   const touched = useRef(Date.now());
@@ -80,8 +79,8 @@ export function MotionLive({ activity: a, mode, onFinish, onManual, sets: cfg }:
   }, [locked]);
 
   const { end, sheet, open } = useEnd(s.total, onFinish, () => (timed
-    ? { activityId: a.id, mode, start: start.current, end: Date.now(), seconds: s.total, invalid: ms?.invalid, sets: s.setList }
-    : { activityId: a.id, mode, start: start.current, end: Date.now(), reps: s.total, invalid: ms?.invalid, seconds: Math.round(sec), sets: s.setList }),
+    ? { activityId: a.id, mode: 'jump', start: start.current, end: Date.now(), seconds: s.total, invalid: ms?.invalid, sets: s.setList }
+    : { activityId: a.id, mode: 'jump', start: start.current, end: Date.now(), reps: s.total, invalid: ms?.invalid, seconds: Math.round(sec), sets: s.setList }),
     timed ? `${a.name} · ${fmtTime(s.total)} gehalten` : `${s.total} ${a.unitLabel} · ${fmtTime(sec)}`);
   endRef.current = end;
 
@@ -119,15 +118,15 @@ export function MotionLive({ activity: a, mode, onFinish, onManual, sets: cfg }:
           : (
             <div className="px-8 text-center">
               <motion.div className="mx-auto mb-6 grid h-28 w-28 place-items-center rounded-full border-4 border-neon/60" animate={{ scale: [1, 1.08, 1] }} transition={{ repeat: Infinity, duration: 1.4 }}>
-                <Icon name={mode === 'jump' ? 'jump' : 'phone'} className="h-12 w-12 text-neon" />
+                <Icon name="jump" className="h-12 w-12 text-neon" />
               </motion.div>
-              <p className="font-display text-3xl">Handy einstecken</p>
+              <p className="font-display text-3xl">Handy am Körper tragen</p>
               <p className="mt-2 text-mute">Dann kurz still stehen. Es piept, sobald es losgeht.</p>
             </div>
           )}
       </div>
 
-      {/* Gesperrt (in der Tasche): nur Zahl, Satz-Balken und Rekord, Knöpfe erst nach dem Entsperren */}
+      {/* Gesperrt: nur Zahl, Satz-Balken und Rekord, Knöpfe erst nach dem Entsperren */}
       <div className={`px-4 space-y-3 ${shut ? 'pb-36' : 'pb-[max(env(safe-area-inset-bottom),16px)]'}`}>
         {ready && <p className={`text-center font-display text-3xl ${ms?.hint === 'Halten!' || ms?.hint === 'Gut so!' ? 'text-ink' : 'text-fire'}`}>{ms?.hint}</p>}
         {ready && (
@@ -135,7 +134,6 @@ export function MotionLive({ activity: a, mode, onFinish, onManual, sets: cfg }:
             <div className="h-full bg-gradient-to-r from-volt to-neon transition-[width] duration-100" style={{ width: `${(ms?.depth ?? 0) * 100}%` }} />
           </div>
         )}
-        {ready && mode === 'pocket' && !shut && <p className="text-center text-xs text-mute">Oberschenkel {Math.round(ms?.value ?? 0)}° geneigt</p>}
         {noData && (
           <div className="space-y-2 text-center">
             <p className="text-fire">Keine Bewegungsdaten. Dieses Gerät hat wohl keinen Bewegungssensor.</p>
@@ -167,7 +165,7 @@ function LockOverlay({ onUnlock }: { onUnlock: () => void }) {
           <span className="absolute inset-y-0 left-0 bg-hot/40" style={{ width: holding ? '100%' : '0%', transition: holding ? `width ${HOLD_MS}ms linear` : 'none' }} />
           <span className="relative flex items-center justify-center gap-2 font-semibold"><Icon name="lock" className="h-5 w-5" /> Gedrückt halten zum Entsperren</span>
         </button>
-        <p className="mt-2 text-center text-xs text-mute">Gesperrt, damit in der Tasche nichts aus Versehen getippt wird.</p>
+        <p className="mt-2 text-center text-xs text-mute">Gesperrt, damit beim Springen nichts aus Versehen getippt wird.</p>
       </div>
     </div>
   );

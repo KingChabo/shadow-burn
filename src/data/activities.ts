@@ -14,8 +14,8 @@ export type ActivityId =
   | 'tabletennis' | 'badminton' | 'martial' | 'handball' | 'padel' | 'ski';
 
 export type Mode = 'camera' | 'sensor' | 'nosetap' | 'manual' | 'timer' | 'distance' | 'duration'
-  // ab 23.11.2026: Handy in der Hosentasche (Oberschenkel-Neigung), Sprung-Zähler (Beschleunigung), GPS live
-  | 'pocket' | 'jump' | 'gps';
+  // ab 23.11.2026: Sprung-Zähler (Beschleunigung), GPS live
+  | 'jump' | 'gps';
 export type Category = 'kraft' | 'core' | 'cardio' | 'ausdauer' | 'sport';
 export type Unit = 'reps' | 'time' | 'distance';
 
@@ -102,7 +102,6 @@ export const MODE_INFO: Record<Mode, { name: string; desc: string; icon: IconNam
   timer: { name: 'Timer', desc: 'Stoppuhr', icon: 'timer' },
   distance: { name: 'Eintragen', desc: 'Strecke und Zeit eintragen', icon: 'route' },
   duration: { name: 'Eintragen', desc: 'Dauer nachher eintragen', icon: 'hand' },
-  pocket: { name: 'Hosentasche', desc: 'Handy in der Tasche', icon: 'phone' },
   jump: { name: 'Sprung-Zähler', desc: 'Spürt jeden Sprung', icon: 'jump' },
   gps: { name: 'GPS', desc: 'Strecke live messen', icon: 'pin' },
 };
@@ -484,15 +483,12 @@ const MORE: Activity[] = [
 /** Alle Übungen, je Kategorie nach Beliebtheit sortiert (beliebteste zuerst). */
 /**
  * Automatische Zähl-Modi (23.11.2026). Reihenfolge = Reihenfolge der Knöpfe, der erste ist Standard.
- * Kamera: Regeln in features/pose/counters.ts, Hosentasche/Sprung: features/motion.ts, GPS: screens/live/GpsLive.tsx.
+ * Kamera: Regeln in features/pose/counters.ts, Sprung: features/motion.ts, GPS: screens/live/GpsLive.tsx.
  */
 const AUTO_MODES: Partial<Record<ActivityId, Mode[]>> = {
-  squat: ['camera', 'pocket', 'manual'],
-  lunge: ['camera', 'pocket', 'manual'],
-  splitsquat: ['pocket', 'manual'],
-  stepup: ['pocket', 'manual'],
-  jumpsquat: ['pocket', 'manual'],
-  wallsit: ['camera', 'pocket', 'timer'],
+  squat: ['camera', 'manual'],
+  lunge: ['camera', 'manual'],
+  wallsit: ['camera', 'timer'],
   pullup: ['camera', 'manual'],
   chinup: ['camera', 'manual'],
   dip: ['camera', 'manual'],
@@ -545,20 +541,24 @@ export function setupHint(id: ActivityId, mode: Mode): string | null {
     };
     return cam[id === 'chinup' ? 'pullup' : id] ?? null;
   }
-  if (mode === 'pocket') {
-    if (id === 'wallsit') return 'Handy in die vordere Hosentasche. Kurz still stehen, bis es piept, dann runter an die Wand. Die Uhr läuft nur, solange der Oberschenkel waagerecht ist.';
-    if (id === 'lunge' || id === 'splitsquat') return 'Handy in die Hosentasche vom vorderen Bein. Kurz still stehen, bis es piept. Gezählt wird das Bein mit dem Handy, für die andere Seite das Handy umstecken.';
-    if (id === 'stepup') return 'Handy in die Hosentasche vom Bein, das aufsteigt. Kurz still stehen, bis es piept. Für die andere Seite das Handy umstecken.';
-    return 'Handy in die vordere Hosentasche (eng sitzende Hose ist am besten). Kurz still stehen, bis es piept, dann los.';
-  }
   if (mode === 'jump') {
-    if (id === 'jumprope') return 'Handy in die Hosentasche oder fest mit dem Griff in die Hand. Kurz still stehen, bis es piept, dann springen.';
-    return 'Handy in die Hosentasche (eng sitzende Hose ist am besten). Kurz still stehen, bis es piept, dann los.';
+    if (id === 'jumprope') return 'Handy fest mit dem Griff in die Hand oder eng am Körper tragen. Kurz still stehen, bis es piept, dann springen.';
+    return 'Handy eng am Körper tragen (z. B. Laufgürtel oder Armtasche). Kurz still stehen, bis es piept, dann los.';
   }
   if (mode === 'gps') return 'Draußen starten. Beim ersten Mal fragt das Handy, ob die App den Standort nutzen darf. Der Bildschirm bleibt während des Trainings an.';
   if (mode === 'sensor') return 'Handy flach auf die Brust, Bildschirm nach oben.';
   if (mode === 'nosetap') return 'Handy unter dein Gesicht, Nase tippt bei jeder Wdh.';
   return null;
+}
+
+/**
+ * Zuletzt gewählter Modus, falls es ihn für die Übung noch gibt. Sonst der Standard.
+ * "Hosentasche" gibt es seit 24.11.2026 nicht mehr: wer das gewählt hatte, zählt wieder selbst (bzw. mit Timer).
+ */
+export function startMode(a: Activity, last?: string): Mode {
+  if (last && (a.modes as string[]).includes(last)) return last as Mode;
+  if (last === 'pocket') return a.modes.find((m) => m === 'manual' || m === 'timer') ?? a.modes[0];
+  return a.modes[0];
 }
 
 /** Diese Modi brauchen keinen Countdown (man trägt Werte nachher ein) */

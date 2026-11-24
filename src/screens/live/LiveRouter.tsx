@@ -23,8 +23,7 @@ export function LiveRouter({ activity, mode, onFinish, onManual, sets }: { activ
           <CameraLive activity={activity} sets={sets} onFinish={onFinish} onManual={activity.modes.includes('manual') || activity.modes.includes('timer') ? onManual : undefined} />
         </Suspense>
       );
-    case 'pocket':
-    case 'jump': return <MotionLive activity={activity} mode={mode} onFinish={onFinish} onManual={fallback} sets={sets} />;
+    case 'jump': return <MotionLive activity={activity} onFinish={onFinish} onManual={fallback} sets={sets} />;
     case 'gps': return <GpsLive activity={activity} onFinish={onFinish} onManual={fallback} />;
     case 'nosetap': return <NoseTapLive activity={activity} onFinish={onFinish} sets={sets} />;
     case 'sensor': return <SensorLive activity={activity} onFinish={onFinish} sets={sets} />;

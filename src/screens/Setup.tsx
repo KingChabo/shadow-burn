@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { MODE_INFO, MUSCLE_NAMES, setupHint, type Activity, type Mode } from '../data/activities';
+import { MODE_INFO, MUSCLE_NAMES, setupHint, startMode, type Activity, type Mode } from '../data/activities';
 import { useGame } from '../lib/store';
 import { Btn, Header, Segmented } from '../components/ui';
 import { useExerciseInfo } from './live/sets';
@@ -22,7 +22,7 @@ export function Setup({ activity: a, onBack, onStart, withSets }: { activity: Ac
   const shownPlan = plan ?? suggestPlan(a, g.prefs.setPlans?.[a.id], info.last);
   const rec = recordText(g.records[a.id], a);
   const last = g.prefs.lastMode[a.id];
-  const [mode, setMode] = useState<Mode>(last && a.modes.includes(last) ? last : a.modes[0]);
+  const [mode, setMode] = useState<Mode>(() => startMode(a, last));
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const hint = setupHint(a.id, mode);

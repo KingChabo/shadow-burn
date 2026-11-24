@@ -33,7 +33,7 @@ export function SummaryScreen({ summary: s, onClose, onAgain }: { summary: Summa
     <div className="relative px-4 pt-[max(env(safe-area-inset-top),20px)] pb-8 space-y-4 overflow-hidden">
       {s.isRecord && <Particles />}
       <div className="text-center">
-        <p className="text-mute tracking-wide text-xs">{a.name} · {MODE_INFO[w.mode].name}</p>
+        <p className="text-mute tracking-wide text-xs">{a.name} · {(MODE_INFO[w.mode] ?? MODE_INFO.manual).name}</p>
         <div className="num mt-2 font-display text-7xl">
           +<CountUp to={s.breakdown.total} />
         </div>

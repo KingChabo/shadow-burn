@@ -350,7 +350,7 @@ function Permissions() {
   );
   return (
     <div className="space-y-3">
-      {row('motion', 'Bewegungssensor', 'Hosentasche, Sprünge, Sit-ups')}
+      {row('motion', 'Bewegungssensor', 'Sprünge, Sit-ups')}
       {row('location', 'Standort (GPS)', 'Strecke live messen')}
       {allow.location && <p className="text-xs text-mute">Den Standort ganz sperren geht in den Handy-Einstellungen unter Apps.</p>}
     </div>

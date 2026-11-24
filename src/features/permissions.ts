@@ -18,7 +18,7 @@ export async function setAllow(kind: PermKind, on: boolean): Promise<Allow> {
 
 /** Welche Erlaubnis ein Zähl-Modus braucht (Kamera fragt das Handy selbst beim Öffnen) */
 export function permFor(mode: Mode): PermKind | null {
-  if (mode === 'sensor' || mode === 'pocket' || mode === 'jump') return 'motion';
+  if (mode === 'sensor' || mode === 'jump') return 'motion';
   if (mode === 'gps') return 'location';
   return null;
 }
@@ -26,7 +26,7 @@ export function permFor(mode: Mode): PermKind | null {
 export const PERM_INFO: Record<PermKind, { title: string; text: string; icon: 'tilt' | 'pin' }> = {
   motion: {
     title: 'Bewegungssensor nutzen?',
-    text: 'Damit zählt das Handy in der Hosentasche oder auf der Brust deine Wiederholungen und Sprünge. Der Sensor läuft nur während dieses Trainings. Nichts wird gespeichert oder verschickt.',
+    text: 'Damit zählt das Handy auf der Brust deine Wiederholungen und am Körper deine Sprünge. Der Sensor läuft nur während dieses Trainings. Nichts wird gespeichert oder verschickt.',
     icon: 'tilt',
   },
   location: {

@@ -1,7 +1,6 @@
 // Zählen mit dem Bewegungssensor des Handys (Beschleunigung inkl. Schwerkraft, "devicemotion").
 // Reine Logik ohne DOM → gut testbar. Die Bildschirme dazu: screens/live/MotionLive.tsx.
 import type { ActivityId } from '../data/activities';
-import { repMachine } from './pose/counters';
 
 export interface Vec { x: number; y: number; z: number }
 export const G = 9.81;
@@ -19,12 +18,12 @@ const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 export type MotionEvent = { type: 'rep' } | { type: 'invalid'; reason: string } | { type: 'ready' } | null;
 
 export interface MotionState {
-  /** Wiederholungen bzw. (bei Halte-Übungen) gehaltene Sekunden */
+  /** Gezählte Sprünge */
   reps: number;
   invalid: number;
   /** Erst still stehen, dann wird die Startlage gemerkt */
   ready: boolean;
-  /** Neigung des Oberschenkels gegenüber dem Stehen (Grad) bzw. Stärke des letzten Stoßes (in g) */
+  /** Stärke des letzten Stoßes (in g) */
   value: number;
   /** 0..1 für den Balken */
   depth: number;
@@ -34,13 +33,13 @@ export interface MotionState {
 export interface MotionCounter {
   update(acc: Vec, t: number): { state: MotionState; event: MotionEvent };
   state(): MotionState;
-  /** Startlage neu bestimmen (wieder still stehen) */
+  /** Neu starten (wieder still stehen) */
   recalibrate(): void;
 }
 
 /**
  * Wartet, bis das Handy ruhig ist (Gesamtbeschleunigung ≈ 1 g und Richtung ändert sich kaum),
- * und meldet dann die Richtung der Schwerkraft. So wird die Lage in der Hosentasche beim Stehen gemerkt.
+ * und meldet dann die Richtung der Schwerkraft. Erst danach beginnt das Zählen.
  */
 function stillness(holdMs: number) {
   let since: number | null = null;
@@ -66,110 +65,7 @@ function lowPass(alpha: number) {
   };
 }
 
-// ---------- Hosentasche: Oberschenkel-Neigung ----------
-
-export interface PocketConfig {
-  /** Ab dieser Neigung (Grad) zählt die Wdh. als tief genug */
-  downDeg: number;
-  /** Bis hierhin zurück = wieder oben */
-  upDeg: number;
-  /** So weit runter und wieder hoch, ohne downDeg zu erreichen = "Tiefer runter!" */
-  partialDeg: number;
-}
-
-/** Kniebeuge & Co.: Oberschenkel waagerecht ≈ 80–90°. 60° ist etwas über "parallel", auch mit lockerer Tasche. */
-export const POCKET_REPS: Partial<Record<ActivityId, PocketConfig>> = {
-  squat: { downDeg: 60, upDeg: 20, partialDeg: 35 },
-  jumpsquat: { downDeg: 60, upDeg: 20, partialDeg: 35 },
-  splitsquat: { downDeg: 60, upDeg: 20, partialDeg: 35 },
-  lunge: { downDeg: 60, upDeg: 20, partialDeg: 35 },
-  stepup: { downDeg: 45, upDeg: 15, partialDeg: 28 },
-};
-/** Halte-Übungen: Uhr läuft nur bei waagerechtem Oberschenkel */
-export const POCKET_HOLD: Partial<Record<ActivityId, { minDeg: number; maxDeg: number }>> = {
-  wallsit: { minDeg: 65, maxDeg: 120 },
-};
-
 const CALIB_HINT = 'Still stehen …';
-
-/**
- * Wiederholungen über die Neigung des Oberschenkels. Das Handy steckt in der Hosentasche und dreht sich mit dem Bein.
- * Gemessen wird der Winkel zwischen der Schwerkraft jetzt und im Stehen. Dadurch ist egal, wie herum das Handy steckt.
- */
-export function createPocketCounter(cfg: PocketConfig): MotionCounter {
-  const st: MotionState = { reps: 0, invalid: 0, ready: false, value: 0, depth: 0, hint: CALIB_HINT };
-  const lp = lowPass(0.15);
-  const still = stillness(800);
-  let base: Vec | null = null;
-  const m = repMachine(1, cfg.upDeg / cfg.downDeg, cfg.partialDeg / cfg.downDeg);
-  return {
-    state: () => ({ ...st }),
-    recalibrate() { base = null; still.reset(); lp.reset(); m.reset(); st.ready = false; st.hint = CALIB_HINT; st.value = 0; st.depth = 0; },
-    update(acc, t) {
-      const g = lp.step(acc);
-      let event: MotionEvent = null;
-      if (!base) {
-        const b = still.step(acc, g, t);
-        if (!b) return { state: { ...st }, event };
-        base = { ...b }; st.ready = true; m.reset(); event = { type: 'ready' };
-      }
-      const tilt = angleDeg(g, base);
-      st.value = tilt;
-      const d = tilt / cfg.downDeg;
-      st.depth = clamp01(d);
-      const r = m.step(d);
-      if (r === 'rep') { st.reps++; event = { type: 'rep' }; }
-      else if (r === 'partial') { st.invalid++; event = { type: 'invalid', reason: 'Tiefer runter!' }; }
-      // Oben und ruhig: Startlage langsam nachführen (Handy rutscht in der Tasche)
-      if (m.phase === 'up' && tilt < cfg.upDeg * 0.6 && Math.abs(len(acc) - G) < 0.8) {
-        base = norm({ x: base.x * 0.98 + norm(g).x * 0.02, y: base.y * 0.98 + norm(g).y * 0.02, z: base.z * 0.98 + norm(g).z * 0.02 });
-      }
-      st.hint = m.phase === 'none' ? 'Gerade hinstellen' : m.phase === 'down' ? 'Hoch!' : d > cfg.partialDeg / cfg.downDeg ? 'Tiefer!' : 'Runter!';
-      return { state: { ...st }, event };
-    },
-  };
-}
-
-/** Halten (Wandsitzen): Sekunden, solange der Oberschenkel waagerecht ist. "reps" = gehaltene Sekunden. */
-export function createPocketHoldCounter(cfg: { minDeg: number; maxDeg: number }): MotionCounter {
-  const st: MotionState = { reps: 0, invalid: 0, ready: false, value: 0, depth: 0, hint: CALIB_HINT };
-  const lp = lowPass(0.15);
-  const still = stillness(800);
-  let base: Vec | null = null;
-  let held = 0, last: number | null = null, started = false, badSince: number | null = null;
-  return {
-    state: () => ({ ...st }),
-    recalibrate() { base = null; still.reset(); lp.reset(); st.ready = false; st.hint = CALIB_HINT; last = null; started = false; badSince = null; },
-    update(acc, t) {
-      const g = lp.step(acc);
-      const dt = last === null ? 0 : Math.min(0.5, (t - last) / 1000);
-      last = t;
-      let event: MotionEvent = null;
-      if (!base) {
-        const b = still.step(acc, g, t);
-        if (!b) return { state: { ...st }, event };
-        base = { ...b }; st.ready = true; event = { type: 'ready' };
-      }
-      const tilt = angleDeg(g, base);
-      st.value = tilt;
-      st.depth = clamp01(tilt / 90);
-      if (tilt >= cfg.minDeg && tilt <= cfg.maxDeg) {
-        started = true; held += dt; badSince = null;
-        const sec = Math.floor(held + 1e-6);
-        if (sec > st.reps) { st.reps = sec; if (sec % 15 === 0) event = { type: 'rep' }; }
-        st.hint = 'Halten!';
-      } else if (!started || tilt < 25) {
-        badSince = null;
-        st.hint = started ? 'Wieder runter in die Sitzposition' : 'Runter, bis die Oberschenkel waagerecht sind';
-      } else {
-        if (badSince === null) badSince = t;
-        st.hint = tilt < cfg.minDeg ? 'Tiefer, Oberschenkel waagerecht!' : 'Nicht so tief';
-        if (t - badSince > 1500 && badSince !== -1) { st.invalid++; event = { type: 'invalid', reason: 'Oberschenkel waagerecht!' }; badSince = -1; }
-      }
-      return { state: { ...st }, event };
-    },
-  };
-}
 
 // ---------- Sprung-Zähler: Stoß beim Landen ----------
 
@@ -192,7 +88,7 @@ export const JUMP: Partial<Record<ActivityId, JumpConfig>> = {
 };
 
 /**
- * Zählt Landungen: kurzer, starker Ruck über peakG. Erst nach kurzer Ruhe geht es los (Handy einstecken),
+ * Zählt Landungen: kurzer, starker Ruck über peakG. Erst nach kurzer Ruhe geht es los (Handy anlegen),
  * danach zählt jeder Stoß, der weit genug vom letzten entfernt ist.
  */
 export function createJumpCounter(cfg: JumpConfig): MotionCounter {
@@ -225,11 +121,8 @@ export function createJumpCounter(cfg: JumpConfig): MotionCounter {
   };
 }
 
-/** Passender Zähler für Übung und Modus, null wenn es keinen gibt */
-export function motionCounterFor(id: ActivityId, mode: 'pocket' | 'jump'): MotionCounter | null {
-  if (mode === 'jump') { const c = JUMP[id]; return c ? createJumpCounter(c) : null; }
-  const h = POCKET_HOLD[id];
-  if (h) return createPocketHoldCounter(h);
-  const r = POCKET_REPS[id];
-  return r ? createPocketCounter(r) : null;
+/** Passender Sprung-Zähler für die Übung, null wenn es keinen gibt */
+export function motionCounterFor(id: ActivityId): MotionCounter | null {
+  const c = JUMP[id];
+  return c ? createJumpCounter(c) : null;
 }

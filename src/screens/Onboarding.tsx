@@ -68,7 +68,7 @@ export function Onboarding() {
               {cam === 'idle' ? <Btn kind="ghost" className="!py-2 !px-3 !text-sm" onClick={askCam}>Erlauben</Btn> : <Status s={cam} />}
             </div>
           </Card>
-          <p className="text-xs text-mute">Bewegungssensor (Handy in der Hosentasche) und Standort (GPS) fragt die App erst, wenn du so einen Modus zum ersten Mal startest.</p>
+          <p className="text-xs text-mute">Bewegungssensor (z. B. Sprung-Zähler) und Standort (GPS) fragt die App erst, wenn du so einen Modus zum ersten Mal startest.</p>
           <div className="flex-1" />
           <Btn onClick={() => setStep(2)}>Weiter</Btn>
         </motion.div>

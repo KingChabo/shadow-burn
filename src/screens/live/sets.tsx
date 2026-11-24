@@ -191,7 +191,7 @@ export function SetProgress({ s, className = '' }: { s: SetsState; className?: s
 
 /**
  * Leiste unter der Zahl: Satz-Balken, Rekord-Zeile und die Knöpfe „Satz fertig“ und „Pause“.
- * `buttons={false}` z. B. wenn die Hosentasche gesperrt ist.
+ * `buttons={false}` z. B. wenn der Sprung-Zähler gesperrt ist.
  */
 export function SetBar({ a, s, record, last, dark = false, buttons = true }: { a: Activity; s: SetsState; record?: number; last?: Workout; dark?: boolean; buttons?: boolean }) {
   void a;
